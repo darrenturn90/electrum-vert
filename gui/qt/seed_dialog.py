@@ -19,8 +19,8 @@
 from PyQt4.QtGui import *
 from PyQt4.QtCore import *
 import PyQt4.QtCore as QtCore
-from electrum_ltc.i18n import _
-from electrum_ltc import mnemonic
+from electrum_vert.i18n import _
+from electrum_vert import mnemonic
 from qrcodewidget import QRCodeWidget
 from util import close_button
 

@@ -1,0 +1,17 @@
+# If you want electrum to appear in a linux app launcher ("start menu"), install this by doing:
+# sudo desktop-file-install electrum.desktop
+
+[Desktop Entry]
+Comment=Lightweight Vertcoin Client
+Exec=electrum-vert %u
+GenericName[en_US]=Electrum-VTC
+GenericName=Electrum-VTC
+Icon=/usr/share/app-install/icons/electrum-vert.png
+Name[en_US]=Electrum Vertcoin Wallet
+Name=Electrum Vertcoin Wallet
+Categories=Network;
+StartupNotify=false
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/vertcoin
+

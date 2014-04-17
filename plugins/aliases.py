@@ -7,16 +7,16 @@ from PyQt4.QtCore import *
 import PyQt4.QtCore as QtCore
 import PyQt4.QtGui as QtGui
 
-from electrum_ltc import bmp, pyqrnative
-from electrum_ltc.i18n import _
+from electrum_vert import bmp, pyqrnative
+from electrum_vert.i18n import _
 
-from electrum_ltc import util
+from electrum_vert import util
 
 ALIAS_REGEXP = '^(|([\w\-\.]+)@)((\w[\w\-]+\.)+[\w\-]+)$'    
 
 
 
-from electrum_ltc.plugins import BasePlugin
+from electrum_vert.plugins import BasePlugin
 
 class Plugin(BasePlugin):
 
@@ -96,9 +96,9 @@ class Plugin(BasePlugin):
         m1 = re.match('([\w\-\.]+)@((\w[\w\-]+\.)+[\w\-]+)', alias)
         m2 = re.match('((\w[\w\-]+\.)+[\w\-]+)', alias)
         if m1:
-            url = 'https://' + m1.group(2) + '/litecoin.id/' + m1.group(1) 
+            url = 'https://' + m1.group(2) + '/vertcoin.id/' + m1.group(1) 
         elif m2:
-            url = 'https://' + alias + '/litecoin.id'
+            url = 'https://' + alias + '/vertcoin.id'
         else:
             return ''
         try:
@@ -128,7 +128,7 @@ class Plugin(BasePlugin):
             EC_KEY.verify_message(previous, signature, "alias:%s:%s"%(alias,target))
 
         if not is_valid(target):
-            raise ValueError("Invalid Litecoin address")
+            raise ValueError("Invalid Vertcoin address")
 
         return target, signing_addr, auth_name
 
