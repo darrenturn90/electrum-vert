@@ -56,7 +56,7 @@ data_files += [
 setup(
     name="Electrum-VTC",
     version=version.ELECTRUM_VERSION,
-    install_requires=['slowaes', 'ecdsa>=0.9', 'vert_scrypt'],
+    install_requires=['slowaes', 'ecdsa>=0.9', 'vtc_scrypt'],
     package_dir={
         'electrum_vert': 'lib',
         'electrum_vert_gui': 'gui',
