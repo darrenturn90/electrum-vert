@@ -78,7 +78,7 @@ setup(
         'electrum_vert.network',
         'electrum_vert.plugins',
         'electrum_vert.pyqrnative',
-        'electrum_vert.scrypt',
+        'electrum_vert.scryptn',
         'electrum_vert.simple_config',
         'electrum_vert.socks',
         'electrum_vert.transaction',

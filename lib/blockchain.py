@@ -25,7 +25,7 @@ try:
     from vtc_scrypt import getPoWHash
 except ImportError:
     print_msg("Warning: vtc_scrypt not available, using fallback")
-    from scrypt import scrypt_1024_1_1_80 as getPoWHash
+    from scrypt import scrypt_N_1_1_80 as getPoWHash
 
 
 class Blockchain(threading.Thread):

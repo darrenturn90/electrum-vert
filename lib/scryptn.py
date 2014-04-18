@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 #
-# scrypt.py - basic implementation of Litecoin's proof-of-work algorithm
+# scryptn.py - basic implementation of Vertcoin's proof-of-work algorithm
+# Copyright (C) 2014 dev@payb.ee
 # Copyright (C) 2014 pooler@litecoinpool.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,14 +19,40 @@
 
 import hashlib
 import hmac
+import struct
 
-def scrypt_1024_1_1_80(header):
+
+def getNfactor(header):
+    (nTimestamp,) = struct.unpack("<I", header[68:72])
+    minNfactor = 10
+    maxNfactor = 30
+    l = 0
+    
+    if (nTimestamp <= 1389306217):
+        return minNfactor
+    
+    s = nTimestamp - 1389306217
+    while (s >> 1) > 3:
+      l += 1
+      s >>= 1
+
+    s &= 3
+
+    n = (l * 150 + s * 25 - 2320) / 100
+
+    if n < 0: n = 0
+
+    N = n & 0xff
+    return min(max(N, minNfactor), maxNfactor)
+
+def scrypt_N_1_1_80(header):
+    N = 1 << (getNfactor(header) + 1)
     if not isinstance(header, str) or len(header) != 80:
         raise ValueError('header must be an 80-byte string')
 
     mac = hmac.new(header, digestmod=hashlib.sha256)
 
-    V = [0]*32*1024
+    V = [0]*32*N
     X = [0]*32
 
     B = list(header[:]) + ['\0']*4
@@ -38,12 +65,12 @@ def scrypt_1024_1_1_80(header):
             X[i*8 + j] = (ord(H[j*4 + 0]) << 0 | ord(H[j*4 + 1]) << 8 |
                           ord(H[j*4 + 2]) << 16 | ord(H[j*4 + 3]) << 24)
 
-    for i in xrange(1024):
+    for i in xrange(N):
         V[i*32:i*32+32] = X
         _xor_salsa8_2(X)
 
-    for i in xrange(1024):
-        k = (X[16] & 1023) * 32
+    for i in xrange(N):
+        k = (X[16] & (N-1)) * 32
         for j in xrange(32):
             X[j] ^= V[k+j]
         _xor_salsa8_2(X)
@@ -259,7 +286,7 @@ if __name__ == '__main__':
     t0 = default_timer()
 
     for header, hash in vectors:
-        assert scrypt_1024_1_1_80(header.decode('hex')) == hash.decode('hex')
+        assert scrypt_N_1_1_80(header.decode('hex')) == hash.decode('hex')
 
     dt = (default_timer() - t0) / len(vectors)
     print "%.1f ms/hash" % (dt*1000)
