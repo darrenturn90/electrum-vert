@@ -83,52 +83,6 @@ def load_theme_paths():
     return theme_paths
 
 
-def csv_transaction(wallet):
-    try:
-        select_export = _('Select file to export your wallet transactions to')
-        fileName = QFileDialog.getSaveFileName(QWidget(), select_export, os.path.expanduser('~/electrum-vert-history.csv'), "*.csv")
-        if fileName:
-            with open(fileName, "w+") as csvfile:
-                transaction = csv.writer(csvfile)
-                transaction.writerow(["transaction_hash","label", "confirmations", "value", "fee", "balance", "timestamp"])
-                for item in wallet.get_tx_history():
-                    tx_hash, confirmations, is_mine, value, fee, balance, timestamp = item
-                    if confirmations:
-                        if timestamp is not None:
-                            try:
-                                time_string = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
-                            except [RuntimeError, TypeError, NameError] as reason:
-                                time_string = "unknown"
-                                pass
-                        else:
-                          time_string = "unknown"
-                    else:
-                        time_string = "pending"
-
-                    if value is not None:
-                        value_string = format_satoshis(value, True)
-                    else:
-                        value_string = '--'
-
-                    if fee is not None:
-                        fee_string = format_satoshis(fee, True)
-                    else:
-                        fee_string = '0'
-
-                    if tx_hash:
-                        label, is_default_label = wallet.get_label(tx_hash)
-                        label = label.encode('utf-8')
-                    else:
-                      label = ""
-
-                    balance_string = format_satoshis(balance, False)
-                    transaction.writerow([tx_hash, label, confirmations, value_string, fee_string, balance_string, time_string])
-                QMessageBox.information(None,_("CSV Export created"), _("Your CSV export has been successfully created."))
-    except (IOError, os.error), reason:
-        export_error_label = _("Electrum was unable to produce a transaction export.")
-        QMessageBox.critical(None,_("Unable to create csv"), export_error_label + "\n" + str(reason))
-
-
 
 class TransactionWindow(QDialog):
 
@@ -299,7 +253,7 @@ class MiniWindow(QDialog):
         show_hist = self.config.get("gui_show_receiving",False)
         self.toggle_receiving_layout(show_hist)
         
-        self.setWindowIcon(QIcon(":icons/electrum.png"))
+        self.setWindowIcon(QIcon(":icons/electrum-vert.png"))
         self.setWindowTitle("Electrum")
         self.setWindowFlags(Qt.Window|Qt.MSWindowsFixedSizeDialogHint)
         self.layout().setSizeConstraint(QLayout.SetFixedSize)
@@ -501,7 +455,7 @@ class MiniWindow(QDialog):
 
 
     def the_website(self):
-        webbrowser.open("http://electrum.org")
+        webbrowser.open("http://electrum-vert.org")
 
 
     def toggle_receiving_layout(self, toggle_state):
@@ -650,7 +604,7 @@ class MiniActuator:
     def __init__(self, main_window):
         """Retrieve the gui theme used in previous session."""
         self.g = main_window
-        self.theme_name = self.g.config.get('litegui_theme','Cleanlook')
+        self.theme_name = self.g.config.get('litegui_theme','MiniVert')
         self.themes = load_theme_paths()
         self.load_theme()
 

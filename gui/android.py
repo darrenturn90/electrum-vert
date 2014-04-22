@@ -166,7 +166,7 @@ def make_layout(s, scrollable = False):
 
         <TextView
           android:id="@+id/textElectrum"
-          android:text="Electrum-VTC"
+          android:text="Electrum-Vert"
           android:textSize="7pt"
           android:textColor="#ff4444ff"
           android:gravity="left"

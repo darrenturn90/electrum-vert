@@ -196,7 +196,7 @@ class ElectrumWindow(QMainWindow):
             self.console.showMessage(self.network.banner)
 
         self.wallet = None
-        self.init_lite()
+        self.init_vert()
 
 
     def go_full(self):
@@ -212,7 +212,7 @@ class ElectrumWindow(QMainWindow):
         self.mini.raise_()
 
 
-    def init_lite(self):
+    def init_vert(self):
         import lite_window
         if not self.check_qt_version():
             if self.config.get('lite_mode') is True:
@@ -262,7 +262,7 @@ class ElectrumWindow(QMainWindow):
         self.accounts_expanded = self.wallet.storage.get('accounts_expanded',{})
         self.current_account = self.wallet.storage.get("current_account", None)
 
-        title = 'Electrum-VTC ' + self.wallet.electrum_version + '  -  ' + self.wallet.storage.path
+        title = 'Electrum-Vert ' + self.wallet.electrum_version + '  -  ' + self.wallet.storage.path
         if self.wallet.is_watching_only(): title += ' [%s]' % (_('watching only'))
         self.setWindowTitle( title )
         self.update_wallet()
@@ -388,9 +388,9 @@ class ElectrumWindow(QMainWindow):
 
         help_menu = menubar.addMenu(_("&Help"))
         help_menu.addAction(_("&About"), self.show_about)
-        help_menu.addAction(_("&Official website"), lambda: webbrowser.open("http://electrum.org"))
+        help_menu.addAction(_("&Official website"), lambda: webbrowser.open("http://electrum-vert.org"))
         help_menu.addSeparator()
-        help_menu.addAction(_("&Documentation"), lambda: webbrowser.open("http://electrum.org/documentation.html")).setShortcut(QKeySequence.HelpContents)
+        help_menu.addAction(_("&Documentation"), lambda: webbrowser.open("http://electrum-vert.org/documentation.html")).setShortcut(QKeySequence.HelpContents)
         help_menu.addAction(_("&Report Bug"), self.show_report_bug)
 
         self.setMenuBar(menubar)
@@ -409,12 +409,12 @@ class ElectrumWindow(QMainWindow):
             return
 
         print_error("Notifying GUI")
-        if len(self.network.interface.pending_transactions_for_notifications) > 0:
+        if len(self.network.pending_transactions_for_notifications) > 0:
             # Combine the transactions if there are more then three
-            tx_amount = len(self.network.interface.pending_transactions_for_notifications)
+            tx_amount = len(self.network.pending_transactions_for_notifications)
             if(tx_amount >= 3):
                 total_amount = 0
-                for tx in self.network.interface.pending_transactions_for_notifications:
+                for tx in self.network.pending_transactions_for_notifications:
                     is_relevant, is_mine, v, fee = self.wallet.get_tx_value(tx)
                     if(v > 0):
                         total_amount += v
@@ -422,11 +422,11 @@ class ElectrumWindow(QMainWindow):
                 self.notify(_("%(txs)s new transactions received. Total amount received in the new transactions %(amount)s %(unit)s") \
                                 % { 'txs' : tx_amount, 'amount' : self.format_amount(total_amount), 'unit' : self.base_unit()})
 
-                self.network.interface.pending_transactions_for_notifications = []
+                self.network.pending_transactions_for_notifications = []
             else:
-              for tx in self.network.interface.pending_transactions_for_notifications:
+              for tx in self.network.pending_transactions_for_notifications:
                   if tx:
-                      self.network.interface.pending_transactions_for_notifications.remove(tx)
+                      self.network.pending_transactions_for_notifications.remove(tx)
                       is_relevant, is_mine, v, fee = self.wallet.get_tx_value(tx)
                       if(v > 0):
                           self.notify(_("New transaction received. %(amount)s %(unit)s") % { 'amount' : self.format_amount(v), 'unit' : self.base_unit()})
@@ -545,8 +545,8 @@ class ElectrumWindow(QMainWindow):
         menu.addAction(_("Copy ID to Clipboard"), lambda: self.app.clipboard().setText(tx_hash))
         menu.addAction(_("Details"), lambda: self.show_transaction(self.wallet.transactions.get(tx_hash)))
         menu.addAction(_("Edit description"), lambda: self.tx_label_clicked(item,2))
-        menu.addAction(_("View on explorer.vertcoin.net"), lambda: webbrowser.open("http://explorer.vertcoin.net/tx/" + tx_hash))
-        menu.addAction(_("View on block-explorer.com"), lambda: webbrowser.open("http://block-explorer.com/tx/" + tx_hash))
+        menu.addAction(_("View on VertExplorer"), lambda: webbrowser.open("http://vertexplorer.com/tx/" + tx_hash))
+        menu.addAction(_("View on explorer.vertcoin.org"), lambda: webbrowser.open("https://explorer.vertcoin.org/tx/" + tx_hash))
         menu.exec_(self.contacts_list.viewport().mapToGlobal(position))
 
 
@@ -855,7 +855,7 @@ class ElectrumWindow(QMainWindow):
             if not self.question(_("send %(amount)s to %(address)s?")%{ 'amount' : self.format_amount(amount) + ' '+ self.base_unit(), 'address' : to_address}):
                 return
             
-        confirm_fee = self.config.get('confirm_fee', 1000000)
+        confirm_fee = self.config.get('confirm_fee', 100000000)
         if fee >= confirm_fee:
             if not self.question(_("The fee for this transaction seems unusually high.\nAre you really sure you want to pay %(fee)s in fees?")%{ 'fee' : self.format_amount(fee) + ' '+ self.base_unit()}):
                 return
@@ -952,11 +952,11 @@ class ElectrumWindow(QMainWindow):
         try:
             address, amount, label, message, signature, identity, url = util.parse_url(url)
         except Exception:
-            QMessageBox.warning(self, _('Error'), _('Invalid vertcoin URL'), _('OK'))
+            QMessageBox.warning(self, _('Error'), _('Invalid Vertcoin URL'), _('OK'))
             return
 
         try:
-            if amount and self.base_unit() == 'mVTC': amount = str( 1000* Decimal(amount))
+            if amount and self.base_unit() == 'mVTC': amount = str( Decimal(amount) * 1000)
             elif amount: amount = str(Decimal(amount))
         except Exception:
             amount = "0.0"
@@ -986,7 +986,7 @@ class ElectrumWindow(QMainWindow):
             self.set_frozen(self.payto_e,True)
             self.set_frozen(self.amount_e,True)
             self.set_frozen(self.message_e,True)
-            self.payto_sig.setText( '      '+_('The vertcoin URI was signed by')+' ' + identity )
+            self.payto_sig.setText( '      '+_('The Vertcoin URI was signed by')+' ' + identity )
         else:
             self.payto_sig.setVisible(False)
 
@@ -2073,8 +2073,54 @@ class ElectrumWindow(QMainWindow):
 
 
     def do_export_history(self):
-        from lite_window import csv_transaction
-        csv_transaction(self.wallet)
+        wallet = self.wallet
+        select_export = _('Select file to export your wallet transactions to')
+        fileName = QFileDialog.getSaveFileName(QWidget(), select_export, os.path.expanduser('~/electrum-ltc-history.csv'), "*.csv")
+        if not fileName:
+            return
+
+        try:
+            with open(fileName, "w+") as csvfile:
+                transaction = csv.writer(csvfile)
+                transaction.writerow(["transaction_hash","label", "confirmations", "value", "fee", "balance", "timestamp"])
+                for item in wallet.get_tx_history():
+                    tx_hash, confirmations, is_mine, value, fee, balance, timestamp = item
+                    if confirmations:
+                        if timestamp is not None:
+                            try:
+                                time_string = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
+                            except [RuntimeError, TypeError, NameError] as reason:
+                                time_string = "unknown"
+                                pass
+                        else:
+                          time_string = "unknown"
+                    else:
+                        time_string = "pending"
+
+                    if value is not None:
+                        value_string = format_satoshis(value, True)
+                    else:
+                        value_string = '--'
+
+                    if fee is not None:
+                        fee_string = format_satoshis(fee, True)
+                    else:
+                        fee_string = '0'
+
+                    if tx_hash:
+                        label, is_default_label = wallet.get_label(tx_hash)
+                        label = label.encode('utf-8')
+                    else:
+                      label = ""
+
+                    balance_string = format_satoshis(balance, False)
+                    transaction.writerow([tx_hash, label, confirmations, value_string, fee_string, balance_string, time_string])
+                QMessageBox.information(None,_("CSV Export created"), _("Your CSV export has been successfully created."))
+
+        except (IOError, os.error), reason:
+            export_error_label = _("Electrum was unable to produce a transaction export.")
+            QMessageBox.critical(None,_("Unable to create csv"), export_error_label + "\n" + str(reason))
+
 
 
     @protected
@@ -2162,7 +2208,7 @@ class ElectrumWindow(QMainWindow):
         unit_combo.setCurrentIndex(units.index(self.base_unit()))
         grid.addWidget(unit_combo, 3, 1)
         grid.addWidget(HelpButton(_('Base unit of your wallet.')\
-                                             + '\n1VTC=1000mVTC.\n' \
+                                             + '\n1 VTC = 1000 mVTC.\n' \
                                              + _(' These settings affects the fields in the Send tab')+' '), 3, 2)
 
         usechange_cb = QCheckBox(_('Use change addresses'))

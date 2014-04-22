@@ -368,19 +368,19 @@ def parse_uri(uri):
 if __name__ == '__main__':
     # Run some tests
     
-    assert(parse_uri('LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx') ==
-           {'address': 'LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx'})
+    assert(parse_uri('DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed') ==
+           {'address': 'DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed'})
 
-    assert(parse_uri('vertcoin://LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx') ==
-           {'address': 'LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx'})
+    assert(parse_uri('vertcoin://DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed') ==
+           {'address': 'DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed'})
     
-    assert(parse_uri('vertcoin:LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx') ==
-           {'address': 'LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx'})
+    assert(parse_uri('vertcoin:DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed') ==
+           {'address': 'DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed'})
     
-    assert(parse_uri('vertcoin:LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx?amount=10') ==
-           {'amount': '10', 'address': 'LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx'})
+    assert(parse_uri('vertcoin:DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed?amount=10') ==
+           {'amount': '10', 'address': 'DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed'})
     
-    assert(parse_uri('vertcoin:LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx?amount=10&label=devfund&message=Donation%20to%20the%20dev%20fund') ==
-           {'amount': '10', 'label': 'devfund', 'message': 'Donation to the dev fund', 'address': 'LcUP7ZU3Xpk1BUR3qut3dTjC3aK5JoZMYx'})
+    assert(parse_uri('vertcoin:DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed?amount=10&label=devfund&message=Donation%20to%20the%20dev%20fund') ==
+           {'amount': '10', 'label': 'devfund', 'message': 'Donation to the dev fund', 'address': 'DELECBa5JPGjkN1CCUHJ6kSWJTK3p3SPed'})
     
     

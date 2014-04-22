@@ -4,8 +4,8 @@
 [Desktop Entry]
 Comment=Lightweight Vertcoin Client
 Exec=electrum-vert %u
-GenericName[en_US]=Electrum-VTC
-GenericName=Electrum-VTC
+GenericName[en_US]=Electrum-Vert
+GenericName=Electrum-Vert
 Icon=/usr/share/app-install/icons/electrum-vert.png
 Name[en_US]=Electrum Vertcoin Wallet
 Name=Electrum Vertcoin Wallet

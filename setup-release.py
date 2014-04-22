@@ -18,7 +18,7 @@ from lib.util import print_error
 from lib.version import ELECTRUM_VERSION as version
 
 
-name = "Electrum-VTC"
+name = "Electrum-Vert"
 mainscript = 'electrum-vert'
 
 if sys.version_info[:3] < (2, 6, 0):
@@ -36,10 +36,10 @@ if sys.platform == 'darwin':
         setup_requires=['py2app'],
         app=[mainscript],
         options=dict(py2app=dict(argv_emulation=True,
-                                 includes=['PyQt4.QtCore', 'PyQt4.QtGui', 'PyQt4.QtWebKit', 'PyQt4.QtNetwork', 'sip'],
+                                 includes=['PyQt4.QtCore', 'PyQt4.QtGui', 'PyQt4.QtNetwork', 'sip'],
                                  packages=['lib', 'gui', 'plugins'],
                                  iconfile='electrum.icns',
-                                 plist=plist,
+                                 plist=plist,strip=True,
                                  resources=["data", "icons"])),
     )
 elif sys.platform == 'win32':

@@ -25,7 +25,7 @@ import traceback
 import json
 import Queue
 from network import Network
-from util import print_msg
+from util import print_msg, print_stderr
 from simple_config import SimpleConfig
 
 
@@ -45,6 +45,7 @@ class NetworkProxy(threading.Thread):
         self.subscriptions = {}
         self.debug = False
         self.lock = threading.Lock()
+        self.pending_transactions_for_notifications = []
 
 
     def start(self, start_daemon=False):
@@ -60,7 +61,7 @@ class NetworkProxy(threading.Thread):
                     return False
 
                 elif not daemon_started:
-                    print "Starting daemon [%s]"%self.config.get('server')
+                    print_stderr( "Starting daemon [%s]"%self.config.get('server'))
                     daemon_started = True
                     pid = os.fork()
                     if (pid == 0): # The first child.
@@ -332,7 +333,7 @@ class NetworkServer:
 
 if __name__ == '__main__':
     import simple_config
-    config = simple_config.SimpleConfig({'verbose':True, 'server':'electrum-vert.bysh.me:50002:s'})
+    config = simple_config.SimpleConfig({'verbose':True, 'server':'electrum.payb.ee:50004:s'})
     server = NetworkServer(config)
     try:
         server.main_loop()

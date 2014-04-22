@@ -17,8 +17,12 @@ def set_verbosity(b):
     global is_verbose
     is_verbose = b
 
+
 def print_error(*args):
     if not is_verbose: return
+    print_stderr(*args)
+
+def print_stderr(*args):
     args = [str(item) for item in args]
     sys.stderr.write(" ".join(args) + "\n")
     sys.stderr.flush()
@@ -41,9 +45,9 @@ def user_dir():
     if "HOME" in os.environ:
         return os.path.join(os.environ["HOME"], ".electrum-vert")
     elif "APPDATA" in os.environ:
-        return os.path.join(os.environ["APPDATA"], "Electrum-VTC")
+        return os.path.join(os.environ["APPDATA"], "Electrum-Vert")
     elif "LOCALAPPDATA" in os.environ:
-        return os.path.join(os.environ["LOCALAPPDATA"], "Electrum-VTC")
+        return os.path.join(os.environ["LOCALAPPDATA"], "Electrum-Vert")
     elif 'ANDROID_DATA' in os.environ:
         return "/sdcard/electrum-vert/"
     else:
@@ -53,7 +57,7 @@ def user_dir():
 def appdata_dir():
     """Find the path to the application data directory; add an electrum folder and return path."""
     if platform.system() == "Windows":
-        return os.path.join(os.environ["APPDATA"], "Electrum-VTC")
+        return os.path.join(os.environ["APPDATA"], "Electrum-Vert")
     elif platform.system() == "Linux":
         return os.path.join(sys.prefix, "share", "electrum-vert")
     elif (platform.system() == "Darwin" or
@@ -61,7 +65,7 @@ def appdata_dir():
           platform.system() == "OpenBSD" or
           platform.system() == "FreeBSD" or
 	  platform.system() == "NetBSD"):
-        return "/Library/Application Support/Electrum-VTC"
+        return "/Library/Application Support/Electrum-Vert"
     else:
         raise Exception("Unknown system")
 

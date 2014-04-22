@@ -7,14 +7,14 @@
 ;General
 
   ;Name and file
-  Name "Electrum-VTC"
+  Name "Electrum-Vert"
   OutFile "dist/electrum-vert-setup.exe"
 
   ;Default installation folder
-  InstallDir "$PROGRAMFILES\Electrum-VTC"
+  InstallDir "$PROGRAMFILES\Electrum-Vert"
 
   ;Get installation folder from registry if available
-  InstallDirRegKey HKCU "Software\Electrum-VTC" ""
+  InstallDirRegKey HKCU "Software\Electrum-Vert" ""
 
   ;Request application privileges for Windows Vista
   RequestExecutionLevel admin
@@ -36,7 +36,7 @@
 
   ;Start Menu Folder Page Configuration
   !define MUI_STARTMENUPAGE_REGISTRY_ROOT "HKCU"
-  !define MUI_STARTMENUPAGE_REGISTRY_KEY "Software\Electrum-VTC"
+  !define MUI_STARTMENUPAGE_REGISTRY_KEY "Software\Electrum-Vert"
   !define MUI_STARTMENUPAGE_REGISTRY_VALUENAME "Start Menu Folder"
 
   ;!insertmacro MUI_PAGE_STARTMENU Application $StartMenuFolder
@@ -62,18 +62,18 @@ Section
   file /r dist\electrum-vert\*.*
 
   ;Store installation folder
-  WriteRegStr HKCU "Software\Electrum-VTC" "" $INSTDIR
+  WriteRegStr HKCU "Software\Electrum-Vert" "" $INSTDIR
 
   ;Create uninstaller
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
 
-  CreateShortCut "$DESKTOP\Electrum-VTC.lnk" "$INSTDIR\electrum-vert.exe" ""
+  CreateShortCut "$DESKTOP\Electrum-Vert.lnk" "$INSTDIR\electrum-vert.exe" ""
 
   ;create start-menu items
-  CreateDirectory "$SMPROGRAMS\Electrum-VTC"
-  CreateShortCut "$SMPROGRAMS\Electrum-VTC\Uninstall.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\Uninstall.exe" 0
-  CreateShortCut "$SMPROGRAMS\Electrum-VTC\Electrum-VTC.lnk" "$INSTDIR\electrum-vert.exe" "" "$INSTDIR\electrum-vert.exe" 0
+  CreateDirectory "$SMPROGRAMS\Electrum-Vert"
+  CreateShortCut "$SMPROGRAMS\Electrum-Vert\Uninstall.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\Uninstall.exe" 0
+  CreateShortCut "$SMPROGRAMS\Electrum-Vert\Electrum-Vert.lnk" "$INSTDIR\electrum-vert.exe" "" "$INSTDIR\electrum-vert.exe" 0
 
 SectionEnd
 
@@ -95,10 +95,10 @@ Section "Uninstall"
 
   RMDir "$INSTDIR"
 
-  Delete "$DESKTOP\Electrum-VTC.lnk"
-  Delete "$SMPROGRAMS\Electrum-VTC\*.*"
-  RmDir  "$SMPROGRAMS\Electrum-VTC"
+  Delete "$DESKTOP\Electrum-Vert.lnk"
+  Delete "$SMPROGRAMS\Electrum-Vert\*.*"
+  RmDir  "$SMPROGRAMS\Electrum-Vert"
 
-  DeleteRegKey /ifempty HKCU "Software\Electrum-VTC"
+  DeleteRegKey /ifempty HKCU "Software\Electrum-Vert"
 
 SectionEnd

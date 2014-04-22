@@ -46,6 +46,10 @@ data_files += [
         "data/sahara/name.cfg",
         "data/sahara/style.css"
     ]),
+    (os.path.join(appdata_dir, "minivert"), [
+        "data/minivert/name.cfg",
+        "data/minivert/style.css"
+    ]),
     (os.path.join(appdata_dir, "dark"), [
         "data/dark/name.cfg",
         "data/dark/style.css"
@@ -54,7 +58,7 @@ data_files += [
 
 
 setup(
-    name="Electrum-VTC",
+    name="Electrum-Vert",
     version=version.ELECTRUM_VERSION,
     install_requires=['slowaes', 'ecdsa>=0.9', 'vtc_scrypt'],
     package_dir={
@@ -114,9 +118,9 @@ setup(
         'electrum_vert_plugins.virtualkeyboard',
     ],
     description="Lightweight Vertcoin Wallet",
-    author="ecdsa",
-    author_email="ecdsa@github",
+    author="paybee",
+    author_email="paybee@github",
     license="GNU GPLv3",
-    url="http://electrum.org",
+    url="http://electrum-vert.org",
     long_description="""Lightweight Vertcoin Wallet"""
 )

@@ -1103,7 +1103,7 @@ class NewWallet:
                 print_error("received transaction that is no longer referenced in history", tx_hash)
                 return
             self.transactions[tx_hash] = tx
-            self.network.interface.pending_transactions_for_notifications.append(tx)
+            self.network.pending_transactions_for_notifications.append(tx)
             self.save_transactions()
             if self.verifier and tx_height>0: 
                 self.verifier.add(tx_hash, tx_height)
@@ -1261,7 +1261,7 @@ class NewWallet:
     def send_tx(self, tx):
         # asynchronous
         self.tx_event.clear()
-        self.network.interface.send([('blockchain.transaction.broadcast', [str(tx)])], self.on_broadcast)
+        self.network.send([('blockchain.transaction.broadcast', [str(tx)])], self.on_broadcast)
         return tx.hash()
 
     def on_broadcast(self, i, r):
@@ -1751,6 +1751,7 @@ class OldWallet(NewWallet):
     def create_watching_only_wallet(self, mpk):
         self.seed_version = OLD_SEED_VERSION
         self.storage.put('seed_version', self.seed_version, True)
+        self.storage.put('master_public_key', mpk, True)
         self.create_account(mpk)
 
     def get_seed(self, password):
@@ -1854,15 +1855,36 @@ class Wallet(object):
         if not seed:
             return False
         elif is_old_seed(seed):
-            return OldWallet
+            return True
         elif is_new_seed(seed):
-            return NewWallet
+            return True
         else: 
             return False
 
     @classmethod
+    def is_mpk(self, mpk):
+        try:
+            int(mpk, 16)
+            old = True
+        except:
+            old = False
+            
+        if old:
+            return len(mpk) == 128
+        else:
+            try:
+                deserialize_xkey(mpk)
+                return True
+            except:
+                return False
+                
+
+    @classmethod
     def from_seed(self, seed, storage):
-        klass = self.is_seed(seed)
+        if is_old_seed(seed):
+            klass = OldWallet
+        elif is_new_seed(seed):
+            klass = NewWallet
         w = klass(storage)
         w.init_seed(seed)
         return w

@@ -7,11 +7,8 @@ from blockchain import Blockchain
 DEFAULT_PORTS = {'t':'50001', 's':'50002', 'h':'8081', 'g':'8082'}
 
 DEFAULT_SERVERS = {
-    'electrum-vert.bysh.me': DEFAULT_PORTS,
-    'electrum.vert.xurious.com': DEFAULT_PORTS,
-    'electrum.lurkmore.com': DEFAULT_PORTS,
-    'electrum.mmitech.info': DEFAULT_PORTS,
-    'explorer.vertcoin.net': DEFAULT_PORTS,
+    'electrum.payb.ee':{'h': '8083', 's': '50004', 't': '50003', 'g': '8084'},
+    'nodealpha.electrum-vert.org':{'h': '8083', 's': '50004', 't': '50003', 'g': '8084'},
 }
 
 
@@ -102,6 +99,7 @@ class Network(threading.Thread):
         self.subscriptions = {}
         self.subscriptions[self.on_banner] = [('server.banner',[])]
         self.subscriptions[self.on_peers] = [('server.peers.subscribe',[])]
+        self.pending_transactions_for_notifications = []
 
 
     def is_connected(self):
