@@ -4,32 +4,32 @@
 }
 
 MiniWindow QPushButton {
-  color: #C1A76D;
-  border: 1px solid #A7811C;
+  color: #639D74;
+  border: 1px solid #2B8A47;
   border-radius: 0px;
   background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-  stop: 0 white, stop: 1 #F2E3BE);
+  stop: 0 white, stop: 1 #A3E5b7);
   min-height: 25px;
   min-width: 30px;
 }
 
 #send_button{
-  color: #FEEBA7;
-  border: 1px solid #AD8B35;
+  color: #3BC563;
+  border: 1px solid #267B3F;
   border-radius: 4px;
   background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-  stop: 0 #E0A035, stop: 1 #AD8B35);
+  stop: 0 #14A73F, stop: 1 #267B3F);
   min-width: 80px;
   min-height: 23px;
   padding: 2px;
 }
 
 #send_button:disabled{
-  color: #FEEDD3;
-  border: 1px solid #F7D46D;
+  color: #BDFACF;
+  border: 1px solid #5FC47D;
   border-radius: 4px;
   background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-  stop: 0 #FAEEA5, stop: 1 #DBC050);
+  stop: 0 #9FFCBA, stop: 1 #64A677);
   min-width: 80px;
   min-height: 23px;
   padding: 2px;
@@ -37,19 +37,19 @@ MiniWindow QPushButton {
 
 #receive_button
 {
-  color: #FEEBA7;
-  border: 1px solid #AD8B35;
+  color: #3BC563;
+  border: 1px solid #267B3F;
   border-radius: 4px;
   background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-  stop: 0 #E0A035, stop: 1 #AD8B35);
+  stop: 0 #14A73F, stop: 1 #267B3F);
   min-height: 25px;
   min-width: 30px;
 }          
 #receive_button[isActive=true]
 {
-  color: #FEEBA7;
+  color: #3BC563;
   background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-  stop: 0 #E0A035, stop: 1 #987620);
+  stop: 0 #14A73F, stop: 1 #987620);
 } 
 
 #address_input, #amount_input
@@ -57,7 +57,7 @@ MiniWindow QPushButton {
     color: #000;
     padding: 5px;
     border-radius: 4px;
-    border: 1px solid #CBAE69;
+    border: 1px solid #6FBA85;
     width: 225px;
 }
 
@@ -66,7 +66,7 @@ MiniWindow QPushButton {
   color: #4D9948;
   padding: 5px;
   border-radius: 4px;
-  border: 1px solid #CBAE69;
+  border: 1px solid #6FBA85;
   width: 225px;
   margin-top: 4px;
 }
@@ -76,7 +76,7 @@ MiniWindow QPushButton {
   color: #CE4141;
   padding: 5px;
   border-radius: 4px;
-  border: 1px solid #CBAE69;
+  border: 1px solid #6FBA85;
   width: 225px;
   margin-top: 4px;
 }
@@ -86,17 +86,17 @@ MiniWindow QPushButton {
   color: #DEC58D;
   padding: 5px;
   border-radius: 4px;
-  border: 1px solid #CBAE69;
+  border: 1px solid #6FBA85;
   width: 225px;
   margin-top: 4px;
 }
 #balance_label
 {
-    color: #7E5907;
+    color: #0C782B;
 }
 
 #history
 {
-    color: #8B6914;
+    color: #268D44;
 }
 
