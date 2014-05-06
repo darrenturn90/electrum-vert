@@ -106,7 +106,7 @@ class Exchanger(threading.Thread):
     def update_pb(self):
         quote_currencies = {}
         try:
-            jsonresp = self.get_json('api.vertpay.com', "/rates/crypto.VTC")
+            jsonresp = self.get_json('api.vertpay.com', "/rates/allrates")
         except Exception:
             return
         for cur in jsonresp:
@@ -204,7 +204,7 @@ class Plugin(BasePlugin):
             try:
                 self.fiat_button
             except:
-                self.gui.main_window.show_message(_("To see fiat amount when sending bitcoin, please restart Electrum to activate the new GUI settings."))
+                self.gui.main_window.show_message(_("To see fiat amount when sending Vertcoin, please restart Electrum to activate the new GUI settings."))
         return out
 
 
