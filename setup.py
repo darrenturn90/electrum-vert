@@ -118,8 +118,8 @@ setup(
         'electrum_vert_plugins.virtualkeyboard',
     ],
     description="Lightweight Vertcoin Wallet",
-    author="paybee",
-    author_email="paybee@github",
+    author="vertpay",
+    author_email="vertpay@github",
     license="GNU GPLv3",
     url="http://electrum-vert.org",
     long_description="""Lightweight Vertcoin Wallet"""

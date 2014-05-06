@@ -265,7 +265,7 @@ def run_network_dialog( network, parent ):
         host_entry.set_text("Not Connected")
     host_entry.show()
     host_box.pack_start(host_entry, False, False, 10)
-    add_help_button(host_box, 'The name, port number and protocol of your Electrum server, separated by a colon. Example: "electrum.payb.ee:50004:s". Some servers allow you to connect through http (port 80) or https (port 443)')
+    add_help_button(host_box, 'The name, port number and protocol of your Electrum server, separated by a colon. Example: "electrum.vertpay.com:50004:s". Some servers allow you to connect through http (port 80) or https (port 443)')
     host_box.show()
 
     p_box = Gtk.HBox(False, 10)

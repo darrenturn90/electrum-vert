@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # scryptn.py - basic implementation of Vertcoin's proof-of-work algorithm
-# Copyright (C) 2014 dev@payb.ee
+# Copyright (C) 2014 dev@vertpay.com
 # Copyright (C) 2014 pooler@litecoinpool.org
 #
 # This program is free software: you can redistribute it and/or modify

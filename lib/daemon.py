@@ -333,7 +333,7 @@ class NetworkServer:
 
 if __name__ == '__main__':
     import simple_config
-    config = simple_config.SimpleConfig({'verbose':True, 'server':'electrum.payb.ee:50004:s'})
+    config = simple_config.SimpleConfig({'verbose':True, 'server':'electrum.vertpay.com:50004:s'})
     server = NetworkServer(config)
     try:
         server.main_loop()
