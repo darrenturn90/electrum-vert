@@ -259,6 +259,30 @@ class Blockchain(threading.Thread):
     def kimoto(self, x):
         return  1 + (0.7084 * dec_pow((Decimal(x)/Decimal(144)), -1.228));
 
+    def convbignum(self, bits):
+        # convert to bignum
+        MM = 256*256*256
+        a = bits%MM
+        if a < 0x8000:
+            a *= 256
+        return (a) * pow(2, 8 * (bits/MM - 3))
+
+    def convbits(self, target):
+        # convert it to bits
+        MM = 256*256*256
+        c = ("%064X"%target)[2:]
+        i = 31
+        while c[0:2]=="00":
+            c = c[2:]
+            i -= 1
+
+        c = int('0x'+c[0:6],16)
+        if c >= 0x800000:
+            c /= 256
+            i += 1
+
+        return c + MM * i
+
     def get_target(self, index, chain=[],data=None):
         max_target = 0x00000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
         if index == 0: return 0x1e0ffff0, 0x00000FFFF0000000000000000000000000000000000000000000000000000000
@@ -274,7 +298,7 @@ class Blockchain(threading.Thread):
             m= index % 2016
 
             try:
-                if m>0:
+                if m > 0:
                     raw_l_header = data[(m-1)*80:(m)*80]
                     last = self.header_from_string(raw_l_header)
                 else:
@@ -284,18 +308,17 @@ class Blockchain(threading.Thread):
 
             for i in xrange(1,maxKGWblocks):
                 blockMass = i
-                if (m - i) > 0:
+                if (m - i) >= 0:
                     raw_f_header = data[(m-i)*80:(m-i+1)*80]
                     first = self.header_from_string(raw_f_header)
                 else:
                     first = self.read_header(index-i)
-                if i == blockMass:
-                    pastDiffAvg = first.get('bits')
-                    solvedTime = first.get('timestamp')
+                if blockMass == 1:
+                    pastDiffAvg = self.convbignum(first.get('bits'))
                 else:
-                    pastDiffAvg = Decimal(first.get('bits') - pastDiffAvgPrev)/Decimal(blockMass) + pastDiffAvgPrev
+                    pastDiffAvg = (self.convbignum(first.get('bits')) - pastDiffAvgPrev)/Decimal(blockMass) + pastDiffAvgPrev
                 pastDiffAvgPrev = pastDiffAvg
-                pastTimeActual = solvedTime - first.get('timestamp')
+                pastTimeActual = last.get('timestamp') - first.get('timestamp')
                 pastTimeTarget = 150*blockMass
                 if pastTimeActual < 0:
                     pastTimeActual = 0
@@ -328,34 +351,17 @@ class Blockchain(threading.Thread):
         if index < 26754:
             nActualTimespan = max(nActualTimespan, nTargetTimespan/4)
             nActualTimespan = min(nActualTimespan, nTargetTimespan*4)
+            target = self.convbignum(last.get('bits'))
         else:
             nActualTimespan = pastTimeActual
             nTargetTimespan = pastTimeTarget
-
-        bits = last.get('bits')
-        # convert to bignum
-        MM = 256*256*256
-        a = bits%MM
-        if a < 0x8000:
-            a *= 256
-        target = (a) * pow(2, 8 * (bits/MM - 3))
+            target = pastDiffAvg
 
         # new target
         new_target = min( max_target, (target * nActualTimespan)/nTargetTimespan )
 
-        # convert it to bits
-        c = ("%064X"%new_target)[2:]
-        i = 31
-        while c[0:2]=="00":
-            c = c[2:]
-            i -= 1
+        new_bits = self.convbits(new_target)
 
-        c = int('0x'+c[0:6],16)
-        if c >= 0x800000:
-            c /= 256
-            i += 1
-
-        new_bits = c + MM * i
         return new_bits, new_target
 
 
