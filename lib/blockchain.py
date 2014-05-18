@@ -17,7 +17,9 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 
+from decimal import Decimal
 import threading, time, Queue, os, sys, shutil
+from math import pow as dec_pow
 from util import user_dir, appdata_dir, print_error, print_msg
 from bitcoin import *
 
@@ -38,11 +40,11 @@ class Blockchain(threading.Thread):
         self.lock = threading.Lock()
         self.local_height = 0
         self.running = False
-        self.headers_url = 'http://electrum-vert.org/blockchain_headers'
+        #self.headers_url = 'http://electrum-vert.org/blockchain_headers'
         self.set_local_height()
         self.queue = Queue.Queue()
 
-    
+
     def height(self):
         return self.local_height
 
@@ -74,7 +76,7 @@ class Blockchain(threading.Thread):
 
             i, header = result
             if not header: continue
-            
+
             height = header.get('block_height')
 
             if height <= self.local_height:
@@ -89,10 +91,10 @@ class Blockchain(threading.Thread):
                 chain = self.get_chain( i, header )
 
                 # skip that server if the result is not consistent
-                if not chain: 
+                if not chain:
                     print_error('e')
                     continue
-                
+
                 # verify the chain
                 if self.verify_chain( chain ):
                     print_error("height:", height, i.server)
@@ -107,18 +109,18 @@ class Blockchain(threading.Thread):
             self.network.new_blockchain_height(height, i)
 
 
-                    
-            
+
     def verify_chain(self, chain):
 
         first_header = chain[0]
         prev_header = self.read_header(first_header.get('block_height') -1)
-        
+
         for header in chain[:-1]:
 
             height = header.get('block_height')
 
             prev_hash = self.hash_header(prev_header)
+
             bits, target = self.get_target(height, chain)
             _hash = self.pow_hash_header(header)
             try:
@@ -136,36 +138,39 @@ class Blockchain(threading.Thread):
 
     def verify_chunk(self, index, hexdata):
         data = hexdata.decode('hex')
-        height = index
+        height = index*2016
         num = len(data)/80
 
-        if index == 0:  
+        if index == 0:
             previous_hash = ("0"*64)
         else:
-            prev_header = self.read_header(index-1)
+            prev_header = self.read_header(index*2016-1)
             if prev_header is None: raise
             previous_hash = self.hash_header(prev_header)
 
-        bits, target = self.get_target(index)
+        if height < 26754:
+            bits, target = self.get_target(index)
 
-        for i in range(num):
-            height = index + i
+        for i in xrange(num):
+            height = index*2016 + i
             raw_header = data[i*80:(i+1)*80]
             header = self.header_from_string(raw_header)
             _hash = self.pow_hash_header(header)
-            if height > 145000:
+            if height >= 26754:
                 bits, target = self.get_target(height, data=data)
+                print_error(bits, '==', header.get('bits'))
             assert previous_hash == header.get('prev_block_hash')
             assert bits == header.get('bits')
             assert int('0x'+_hash,16) < target
 
+            print 'verified height ' + str(height)
             previous_header = header
             previous_hash = self.hash_header(header)
 
         self.save_chunk(index, data)
         print_error("validated chunk %d"%height)
 
-        
+
 
     def header_to_string(self, res):
         s = int_to_hex(res.get('version'),4) \
@@ -201,7 +206,7 @@ class Blockchain(threading.Thread):
         filename = self.path()
         if os.path.exists(filename):
             return
-        
+
         try:
             import urllib, socket
             socket.setdefaulttimeout(30)
@@ -215,7 +220,7 @@ class Blockchain(threading.Thread):
     def save_chunk(self, index, chunk):
         filename = self.path()
         f = open(filename,'rb+')
-        f.seek(index*80)
+        f.seek(index*2016*80)
         h = f.write(chunk)
         f.close()
         self.set_local_height()
@@ -249,43 +254,83 @@ class Blockchain(threading.Thread):
             f.close()
             if len(h) == 80:
                 h = self.header_from_string(h)
-                return h 
+                return h
 
+    def kimoto(self, x):
+        return  1 + (0.7084 * dec_pow((Decimal(x)/Decimal(144)), -1.228));
 
     def get_target(self, index, chain=[],data=None):
         max_target = 0x00000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
         if index == 0: return 0x1e0ffff0, 0x00000FFFF0000000000000000000000000000000000000000000000000000000
 
-        # Vertcoin: go back the full period unless it's the first retarget
-        if index == 1:
-            first = self.read_header(0)
-        else:
-            first = self.read_header((index-1)*240-1)
-        last = self.read_header(index*240-1)
-        if last is None:
-            for h in chain:
-                if h.get('block_height') == index*240-1:
-                    last = h
+        KGW = False
+        if index >= 26754:
+            KGW = True
 
-		# so much of rewriting required...
+        minKGWblocks = 144
+        maxKGWblocks = 4032
+
+        if KGW and data:
+            m= index % 2016
+
+            try:
+                if m>0:
+                    raw_l_header = data[(m-1)*80:(m)*80]
+                    last = self.header_from_string(raw_l_header)
+                else:
+                    last = self.read_header(index-1)
+            except Exception:
+                last = None
+
+            for i in xrange(1,maxKGWblocks):
+                blockMass = i
+                if (m - i) > 0:
+                    raw_f_header = data[(m-i)*80:(m-i+1)*80]
+                    first = self.header_from_string(raw_f_header)
+                else:
+                    first = self.read_header(index-i)
+                if i == blockMass:
+                    pastDiffAvg = first.get('bits')
+                    solvedTime = first.get('timestamp')
+                else:
+                    pastDiffAvg = Decimal(first.get('bits') - pastDiffAvgPrev)/Decimal(blockMass) + pastDiffAvgPrev
+                pastDiffAvgPrev = pastDiffAvg
+                pastTimeActual = solvedTime - first.get('timestamp')
+                pastTimeTarget = 150*blockMass
+                if pastTimeActual < 0:
+                    pastTimeActual = 0
+                pastRateAdjRatio = 1.0
+                if pastTimeActual != 0 and pastTimeTarget != 0:
+                    pastRateAdjRatio = Decimal(pastTimeTarget)/Decimal(pastTimeActual)
+                eventHorizon = self.kimoto(blockMass)
+                eventHorizonFast = eventHorizon
+                eventHorizonSlow = 1/Decimal(eventHorizon)
+
+                if blockMass >= minKGWblocks:
+                    if pastRateAdjRatio <= eventHorizonSlow or pastRateAdjRatio >= eventHorizonFast:
+                        print_error('adjratio: ', pastRateAdjRatio, ' eventHorizon ', eventHorizon)
+                        break
+
+        else:
+            # Vertcoin: go back the full period unless it's the first retarget
+            if index == 1:
+                first = self.read_header(0)
+            else:
+                first = self.read_header((index-1)*2016-1)
+            last = self.read_header(index*2016-1)
+            if last is None:
+                for h in chain:
+                    if h.get('block_height') == index*2016-1:
+                        last = h
+
         nActualTimespan = last.get('timestamp') - first.get('timestamp')
-        nTargetTimespan = 4*60*60
-        if index <= 5000:
-            nActualTimespan = max(nActualTimespan, nTargetTimespan/16)
-            nActualTimespan = min(nActualTimespan, nTargetTimespan*4)
-        elif index <= 10000:
-            nActualTimespan = max(nActualTimespan, nTargetTimespan/8)
-            nActualTimespan = min(nActualTimespan, nTargetTimespan*4)
-        elif index <= 145000:
+        nTargetTimespan = 84*60*60
+        if index < 26754:
             nActualTimespan = max(nActualTimespan, nTargetTimespan/4)
             nActualTimespan = min(nActualTimespan, nTargetTimespan*4)
         else:
-            nTargetTimespan = 60
-            nActualTimespan = nTargetTimespan + (nActualTimespan - nTargetTimespan)/8
-            if nActualTimespan < (nTargetTimespan - (nTargetTimespan/4)):
-                nActualTimespan = nTargetTimespan - (nTargetTimespan/4)
-            if nActualTimespan > (nTargetTimespan + (nTargetTimespan/2)):
-                nActualTimespan = nTargetTimespan + (nTargetTimespan/2)
+            nActualTimespan = pastTimeActual
+            nTargetTimespan = pastTimeTarget
 
         bits = last.get('bits')
         # convert to bignum
@@ -296,9 +341,8 @@ class Blockchain(threading.Thread):
         target = (a) * pow(2, 8 * (bits/MM - 3))
 
         # new target
-        #not sure about this, but it seems to work:
-        new_target = target
-        
+        new_target = min( max_target, (target * nActualTimespan)/nTargetTimespan )
+
         # convert it to bits
         c = ("%064X"%new_target)[2:]
         i = 31
@@ -307,7 +351,7 @@ class Blockchain(threading.Thread):
             i -= 1
 
         c = int('0x'+c[0:6],16)
-        if c > 0x800000: 
+        if c >= 0x800000:
             c /= 256
             i += 1
 
@@ -327,7 +371,7 @@ class Blockchain(threading.Thread):
                 print_error('timeout')
                 continue
 
-            if not ir: 
+            if not ir:
                 continue
 
             i, r = ir
@@ -343,7 +387,7 @@ class Blockchain(threading.Thread):
 
             if method == 'blockchain.block.get_header':
                 return result
-                
+
 
 
     def get_chain(self, interface, final_header):
@@ -386,18 +430,19 @@ class Blockchain(threading.Thread):
 
         queue = Queue.Queue()
         min_index = (self.local_height + 1)
-        max_index = (height + 1)
+        max_index = (height + 1)/2016
         n = min_index
         while n < max_index + 1:
             print_error( "Requesting chunk:", n )
             r = i.synchronous_get([ ('blockchain.block.get_chunk',[n])])[0]
-            if not r: 
+            if not r:
                 continue
             try:
                 self.verify_chunk(n, r)
                 n = n + 1
-            except Exception:
-                print_error('Verify chunk failed!')
+            except Exception, e:
+                print_error('Verify chunk failed!', e)
+                break
                 n = n - 1
                 if n < 0:
                     return False
