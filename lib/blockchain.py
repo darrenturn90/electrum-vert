@@ -261,11 +261,7 @@ class Blockchain(threading.Thread):
 
     def convbignum(self, bits):
         # convert to bignum
-        MM = 256*256*256
-        a = bits%MM
-        if a < 0x8000:
-            a *= 256
-        return (a) * pow(2, 8 * (bits/MM - 3))
+        return  (bits & 0xffffff) *(1<<( 8 * ((bits>>24) - 3)))
 
     def convbits(self, target):
         # convert it to bits
