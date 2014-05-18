@@ -435,7 +435,7 @@ class Blockchain(threading.Thread):
     def get_and_verify_chunks(self, i, header, height):
 
         queue = Queue.Queue()
-        min_index = (self.local_height + 1)
+        min_index = (self.local_height + 1)/2016
         max_index = (height + 1)/2016
         n = min_index
         while n < max_index + 1:
