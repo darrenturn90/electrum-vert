@@ -341,11 +341,11 @@ class Blockchain(threading.Thread):
 
                 if blockMass >= minKGWblocks:
                     if pastRateAdjRatio <= eventHorizonSlow or pastRateAdjRatio >= eventHorizonFast:
-                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon))
+                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon)
                         first = first['header']
                         break
                     elif blockMass == maxKGWblocks:
-                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon))
+                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon)
                         first = first['header']
 
         else:
