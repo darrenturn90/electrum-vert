@@ -31,6 +31,7 @@ except ImportError:
 
 
 KGW_headers = [{} for x in xrange(4032)]
+Kimoto_vals = [1 + (0.7084 * dec_pow((Decimal(x+1)/Decimal(144)), -1.228)) for x in xrange(4032)]
 
 class Blockchain(threading.Thread):
 
@@ -258,7 +259,8 @@ class Blockchain(threading.Thread):
                 return h
 
     def kimoto(self, x):
-        return  1 + (0.7084 * dec_pow((Decimal(x)/Decimal(144)), -1.228));
+        global Kimoto_vals
+        return Kimoto_vals[x-1]
 
     def convbignum(self, bits):
         # convert to bignum
