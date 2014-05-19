@@ -160,7 +160,6 @@ class Blockchain(threading.Thread):
             _hash = self.pow_hash_header(header)
             if height >= 26754:
                 bits, target = self.get_target(height, data=data)
-                print_error(bits, '==', header.get('bits'))
             assert previous_hash == header.get('prev_block_hash')
             assert bits == header.get('bits')
             assert int('0x'+_hash,16) < target
@@ -309,7 +308,7 @@ class Blockchain(threading.Thread):
             except Exception:
                 last = None
 
-            for i in xrange(1,maxKGWblocks):
+            for i in xrange(1,maxKGWblocks+1):
                 blockMass = i
                 KGW_i = index%4032 - i
                 if KGW_i < 0:
@@ -342,9 +341,12 @@ class Blockchain(threading.Thread):
 
                 if blockMass >= minKGWblocks:
                     if pastRateAdjRatio <= eventHorizonSlow or pastRateAdjRatio >= eventHorizonFast:
-                        print_error('adjratio: ', pastRateAdjRatio, ' eventHorizon ', eventHorizon)
+                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon))
                         first = first['header']
                         break
+                    elif blockMass == maxKGWblocks:
+                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon))
+                        first = first['header']
 
         else:
             # Vertcoin: go back the full period unless it's the first retarget
