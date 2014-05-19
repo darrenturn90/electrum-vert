@@ -30,6 +30,9 @@ except ImportError:
     from scrypt import scrypt_N_1_1_80 as getPoWHash
 
 
+KGW_headers = [{} for x in xrange(4032)]
+Kimoto_vals = [1 + (0.7084 * dec_pow((Decimal(x+1)/Decimal(144)), -1.228)) for x in xrange(4032)]
+
 class Blockchain(threading.Thread):
 
     def __init__(self, config, network):
@@ -158,12 +161,11 @@ class Blockchain(threading.Thread):
             _hash = self.pow_hash_header(header)
             if height >= 26754:
                 bits, target = self.get_target(height, data=data)
-                print_error(bits, '==', header.get('bits'))
             assert previous_hash == header.get('prev_block_hash')
             assert bits == header.get('bits')
             assert int('0x'+_hash,16) < target
 
-            print 'verified height ' + str(height)
+            print_error( 'verified height ', str(height))
             previous_header = header
             previous_hash = self.hash_header(header)
 
@@ -257,7 +259,8 @@ class Blockchain(threading.Thread):
                 return h
 
     def kimoto(self, x):
-        return  1 + (0.7084 * dec_pow((Decimal(x)/Decimal(144)), -1.228));
+        global Kimoto_vals
+        return Kimoto_vals[x-1]
 
     def convbignum(self, bits):
         # convert to bignum
@@ -284,6 +287,7 @@ class Blockchain(threading.Thread):
         if index == 0: return 0x1e0ffff0, 0x00000FFFF0000000000000000000000000000000000000000000000000000000
 
         KGW = False
+        global KGW_headers
         if index >= 26754:
             KGW = True
 
@@ -297,24 +301,36 @@ class Blockchain(threading.Thread):
                 if m > 0:
                     raw_l_header = data[(m-1)*80:(m)*80]
                     last = self.header_from_string(raw_l_header)
+                    t = self.convbignum(last.get('bits'))
+                    KGW_headers[(index-1)%4032] = {'header':last,'t':t}
                 else:
                     last = self.read_header(index-1)
+                    t = self.convbignum(last.get('bits'))
+                    KGW_headers[(index-1)%4032] = {'header':last,'t':t}
             except Exception:
                 last = None
 
-            for i in xrange(1,maxKGWblocks):
+            for i in xrange(1,maxKGWblocks+1):
                 blockMass = i
-                if (m - i) >= 0:
-                    raw_f_header = data[(m-i)*80:(m-i+1)*80]
-                    first = self.header_from_string(raw_f_header)
-                else:
-                    first = self.read_header(index-i)
+                KGW_i = index%4032 - i
+                if KGW_i < 0:
+                    KGW_i = 4032 + KGW_i
+                if 'header' not in KGW_headers[KGW_i]:
+                    if (m-i) >= 0:
+                        raw_f_header = data[(m-i)*80:(m-i+1)*80]
+                        first = self.header_from_string(raw_f_header)
+                    else:
+                        first = self.read_header(index-i)
+                    t = self.convbignum(first.get('bits'))
+                    KGW_headers[KGW_i] = {'header':first,'t':t}
+                first = KGW_headers[KGW_i]
+
                 if blockMass == 1:
-                    pastDiffAvg = self.convbignum(first.get('bits'))
+                    pastDiffAvg = first['t']
                 else:
-                    pastDiffAvg = (self.convbignum(first.get('bits')) - pastDiffAvgPrev)/Decimal(blockMass) + pastDiffAvgPrev
+                    pastDiffAvg = (first['t'] - pastDiffAvgPrev)/Decimal(blockMass) + pastDiffAvgPrev
                 pastDiffAvgPrev = pastDiffAvg
-                pastTimeActual = last.get('timestamp') - first.get('timestamp')
+                pastTimeActual = last.get('timestamp') - first['header'].get('timestamp')
                 pastTimeTarget = 150*blockMass
                 if pastTimeActual < 0:
                     pastTimeActual = 0
@@ -327,8 +343,12 @@ class Blockchain(threading.Thread):
 
                 if blockMass >= minKGWblocks:
                     if pastRateAdjRatio <= eventHorizonSlow or pastRateAdjRatio >= eventHorizonFast:
-                        print_error('adjratio: ', pastRateAdjRatio, ' eventHorizon ', eventHorizon)
+                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon)
+                        first = first['header']
                         break
+                    elif blockMass == maxKGWblocks:
+                        print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon)
+                        first = first['header']
 
         else:
             # Vertcoin: go back the full period unless it's the first retarget
