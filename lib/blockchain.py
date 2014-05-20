@@ -130,7 +130,9 @@ class Blockchain(threading.Thread):
                 assert prev_hash == header.get('prev_block_hash')
                 assert bits == header.get('bits')
                 assert int('0x'+_hash,16) < target
-            except Exception:
+                print_error('verified height: ', height)
+            except Exception, e:
+                print_error('exception: ', e)
                 return False
 
             prev_header = header
@@ -258,10 +260,6 @@ class Blockchain(threading.Thread):
                 h = self.header_from_string(h)
                 return h
 
-    def kimoto(self, x):
-        global Kimoto_vals
-        return Kimoto_vals[x-1]
-
     def convbignum(self, bits):
         # convert to bignum
         return  (bits & 0xffffff) *(1<<( 8 * ((bits>>24) - 3)))
@@ -285,6 +283,8 @@ class Blockchain(threading.Thread):
     def get_target(self, index, chain=[],data=None):
         max_target = 0x00000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
         if index == 0: return 0x1e0ffff0, 0x00000FFFF0000000000000000000000000000000000000000000000000000000
+        global Kimoto_vals
+        k_vals = Kimoto_vals
 
         KGW = False
         global KGW_headers
@@ -294,35 +294,46 @@ class Blockchain(threading.Thread):
         minKGWblocks = 144
         maxKGWblocks = 4032
 
-        if KGW and data:
+
+        if KGW and data or chain:
             m= index % 2016
+            if chain:
+                m = 0
 
             try:
                 if m > 0:
                     raw_l_header = data[(m-1)*80:(m)*80]
                     last = self.header_from_string(raw_l_header)
+                    ts = last.get('timestamp')
                     t = self.convbignum(last.get('bits'))
-                    KGW_headers[(index-1)%4032] = {'header':last,'t':t}
+                    KGW_headers[(index-1)%4032] = {'header':last,'t':t, 'ts':ts}
                 else:
                     last = self.read_header(index-1)
                     t = self.convbignum(last.get('bits'))
-                    KGW_headers[(index-1)%4032] = {'header':last,'t':t}
+                    ts = last.get('timestamp')
+                    KGW_headers[(index-1)%4032] = {'header':last,'t':t, 'ts':ts}
             except Exception:
-                last = None
+                for h in chain:
+                    if h.get('block_height') == index-1:
+                        last = h
+                        ts = last.get('timestamp')
+                        t = self.convbignum(last.get('bits'))
+                        KGW_headers[(index-1)%4032] = {'header':last,'t':t,'ts':ts}
 
             for i in xrange(1,maxKGWblocks+1):
                 blockMass = i
                 KGW_i = index%4032 - i
                 if KGW_i < 0:
                     KGW_i = 4032 + KGW_i
-                if 'header' not in KGW_headers[KGW_i]:
+                if 'header' not in KGW_headers[KGW_i] and blockMass != 1:
                     if (m-i) >= 0:
                         raw_f_header = data[(m-i)*80:(m-i+1)*80]
                         first = self.header_from_string(raw_f_header)
                     else:
                         first = self.read_header(index-i)
                     t = self.convbignum(first.get('bits'))
-                    KGW_headers[KGW_i] = {'header':first,'t':t}
+                    ts = first.get('timestamp')
+                    KGW_headers[KGW_i] = {'header':first,'t':t, 'ts':ts}
                 first = KGW_headers[KGW_i]
 
                 if blockMass == 1:
@@ -330,18 +341,18 @@ class Blockchain(threading.Thread):
                 else:
                     pastDiffAvg = (first['t'] - pastDiffAvgPrev)/Decimal(blockMass) + pastDiffAvgPrev
                 pastDiffAvgPrev = pastDiffAvg
-                pastTimeActual = last.get('timestamp') - first['header'].get('timestamp')
-                pastTimeTarget = 150*blockMass
-                if pastTimeActual < 0:
-                    pastTimeActual = 0
-                pastRateAdjRatio = 1.0
-                if pastTimeActual != 0 and pastTimeTarget != 0:
-                    pastRateAdjRatio = Decimal(pastTimeTarget)/Decimal(pastTimeActual)
-                eventHorizon = self.kimoto(blockMass)
-                eventHorizonFast = eventHorizon
-                eventHorizonSlow = 1/Decimal(eventHorizon)
 
                 if blockMass >= minKGWblocks:
+                    pastTimeActual = KGW_headers[(index-1)%4032]['ts'] - first['ts']
+                    pastTimeTarget = 150*blockMass
+                    if pastTimeActual < 0:
+                        pastTimeActual = 0
+                    pastRateAdjRatio = 1.0
+                    if pastTimeActual != 0 and pastTimeTarget != 0:
+                        pastRateAdjRatio = Decimal(pastTimeTarget)/Decimal(pastTimeActual)
+                    eventHorizon = k_vals[(blockMass-1)]
+                    eventHorizonFast = eventHorizon
+                    eventHorizonSlow = 1/Decimal(eventHorizon)
                     if pastRateAdjRatio <= eventHorizonSlow or pastRateAdjRatio >= eventHorizonFast:
                         print_error('blockMass: ', blockMass, 'adjratio: ', pastRateAdjRatio, ' eventHorizon: ', eventHorizon)
                         first = first['header']
