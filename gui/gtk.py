@@ -33,7 +33,7 @@ APP_NAME = "Electrum-Vert"
 import platform
 MONOSPACE_FONT = 'Lucida Console' if platform.system() == 'Windows' else 'monospace'
 
-from electrum_vert.util import format_satoshis
+from electrum_vert.util import format_satoshis, parse_url
 from electrum_vert.network import DEFAULT_SERVERS
 from electrum_vert.bitcoin import MIN_RELAY_TX_FEE
 
@@ -62,20 +62,16 @@ def numbify(entry, is_int = False):
 
 
 
-def show_seed_dialog(wallet, password, parent):
-    if not wallet.seed:
+def show_seed_dialog(seed, parent):
+    if not seed:
         show_message("No seed")
         return
-    try:
-        mnemonic = wallet.get_mnemonic(password)
-    except Exception:
-        show_message("Incorrect password")
-        return
+
     dialog = Gtk.MessageDialog(
         parent = parent,
         flags = Gtk.DialogFlags.MODAL, 
         buttons = Gtk.ButtonsType.OK, 
-        message_format = "Your wallet generation seed is:\n\n" + '"' + mnemonic + '"'\
+        message_format = "Your wallet generation seed is:\n\n" + '"' + seed + '"'\
             + "\n\nPlease keep it in a safe place; if you lose it, you will not be able to restore your wallet.\n\n" )
     dialog.set_title("Seed")
     dialog.show()
@@ -87,7 +83,7 @@ def restore_create_dialog():
     # ask if the user wants to create a new wallet, or recover from a seed. 
     # if he wants to recover, and nothing is found, do not create wallet
     dialog = Gtk.Dialog("electrum", parent=None, 
-                        flags=Gtk.DialogFlags.MODAL|Gtk.DialogFlags.NO_SEPARATOR, 
+                        flags=Gtk.DialogFlags.MODAL,
                         buttons= ("create", 0, "restore",1, "cancel",2)  )
 
     label = Gtk.Label("Wallet file not found.\nDo you want to create a new wallet,\n or to restore an existing one?"  )
@@ -135,16 +131,11 @@ def run_recovery_dialog():
     if r==Gtk.ResponseType.CANCEL:
         return False
 
-    try:
-        seed.decode('hex')
-    except Exception:
-        print_error("Warning: Not hex, trying decode")
-        seed = mnemonic.mn_decode( seed.split(' ') )
-    if not seed:
-        show_message("no seed")
-        return False
-        
-    return seed
+    if Wallet.is_seed(seed):
+        return seed
+
+    show_message("no seed")
+    return False
 
 
 
@@ -473,7 +464,7 @@ class ElectrumWindow:
         self.num_zeros = int(self.config.get('num_zeros',0))
 
         self.window = MyWindow(Gtk.WindowType.TOPLEVEL)
-        title = 'Electrum ' + self.wallet.electrum_version + '  -  ' + self.config.path
+        title = 'Electrum-Vert ' + self.wallet.electrum_version + '  -  ' + self.config.path
         if not self.wallet.seed: title += ' [seedless]'
         self.window.set_title(title)
         self.window.connect("destroy", Gtk.main_quit)
@@ -515,7 +506,8 @@ class ElectrumWindow:
                     password = password_dialog(self.window)
                     if not password: return
                 else: password = None
-                show_seed_dialog(wallet, password, self.window)
+                seed = wallet.get_mnemonic(password)
+                show_seed_dialog(seed, self.window)
             button = Gtk.Button('S')
             button.connect("clicked", seedb, self.wallet )
             button.set_relief(Gtk.ReliefStyle.NONE)
@@ -738,18 +730,12 @@ class ElectrumWindow:
             entry.modify_base(Gtk.StateType.NORMAL, Gdk.color_parse("#ffffff"))
 
     def set_url(self, url):
-        payto, amount, label, message, signature, identity, url = self.wallet.parse_url(url, self.show_message, self.question)
+        payto, amount, label, message, payment_request, url = parse_url(url)
         self.notebook.set_current_page(1)
         self.payto_entry.set_text(payto)
         self.message_entry.set_text(message)
         self.amount_entry.set_text(amount)
-        if identity:
-            self.set_frozen(self.payto_entry,True)
-            self.set_frozen(self.amount_entry,True)
-            self.set_frozen(self.message_entry,True)
-            self.payto_sig_id.set_text( '      The vertcoin URI was signed by ' + identity )
-        else:
-            self.payto_sig.set_visible(False)
+        self.payto_sig.set_visible(False)
 
     def create_about_tab(self):
         from gi.repository import Pango
@@ -1316,21 +1302,23 @@ class ElectrumGui():
                 wallet.gap_limit = gap
                 wallet.storage.put('gap_limit', gap, True)
 
-
             if action == 'create':
-                wallet.init_seed(None)
-                show_seed_dialog(wallet, None, None)
+                seed = wallet.make_seed()
+                show_seed_dialog(seed, None)
                 r = change_password_dialog(False, None)
                 password = r[2] if r else None
-                wallet.save_seed(password)
+                wallet.add_seed(seed, password)
+                wallet.create_accounts(password)
                 wallet.synchronize()  # generate first addresses offline
 
             elif action == 'restore':
                 seed = self.seed_dialog()
-                wallet.init_seed(seed)
+                if not seed:
+                    exit()
                 r = change_password_dialog(False, None)
                 password = r[2] if r else None
-                wallet.save_seed(password)
+                wallet.add_seed(seed, password)
+                wallet.create_accounts(password)
                 
             else:
                 exit()

@@ -36,33 +36,14 @@ from bitcoin import *
 from account import *
 from transaction import Transaction
 from plugins import run_hook
+import bitcoin
+from synchronizer import WalletSynchronizer
 
 COINBASE_MATURITY = 100
 DUST_THRESHOLD = 0
 
-# AES encryption
-EncodeAES = lambda secret, s: base64.b64encode(aes.encryptData(secret,s))
-DecodeAES = lambda secret, e: aes.decryptData(secret, base64.b64decode(e))
-
-def pw_encode(s, password):
-    if password:
-        secret = Hash(password)
-        return EncodeAES(secret, s)
-    else:
-        return s
-
-def pw_decode(s, password):
-    if password is not None:
-        secret = Hash(password)
-        try:
-            d = DecodeAES(secret, s)
-        except Exception:
-            raise Exception('Invalid password')
-        return d
-    else:
-        return s
-
-
+# internal ID for imported account
+IMPORTED_ACCOUNT = '/x'
 
 
 
@@ -155,17 +136,17 @@ class WalletStorage:
 
     
 
-class NewWallet:
+        
+
+class Abstract_Wallet:
 
     def __init__(self, storage):
 
         self.storage = storage
         self.electrum_version = ELECTRUM_VERSION
         self.gap_limit_for_change = 3 # constant
-
         # saved fields
         self.seed_version          = storage.get('seed_version', NEW_SEED_VERSION)
-
         self.gap_limit             = storage.get('gap_limit', 5)
         self.use_change            = storage.get('use_change',True)
         self.use_encryption        = storage.get('use_encryption', False)
@@ -174,7 +155,6 @@ class NewWallet:
         self.frozen_addresses      = storage.get('frozen_addresses',[])
         self.addressbook           = storage.get('contacts', [])
 
-        self.imported_keys         = storage.get('imported_keys',{})
         self.history               = storage.get('addr_history',{})        # address -> list(txid, height)
 
         self.fee                   = int(storage.get('fee_per_kb',100000))
@@ -237,12 +217,43 @@ class NewWallet:
                 for tx2 in self.transactions.values():
                     tx2.add_extra_addresses({h:tx})
 
-            
 
+    def get_action(self):
+        pass
+
+    def load_accounts(self):
+        self.accounts = {}
+        self.imported_keys = self.storage.get('imported_keys',{})
+        if self.imported_keys:
+            print_error("cannot load imported keys")
+
+        d = self.storage.get('accounts', {})
+        for k, v in d.items():
+            if k == 0:
+                v['mpk'] = self.storage.get('master_public_key')
+                self.accounts[k] = OldAccount(v)
+            elif v.get('imported'):
+                self.accounts[k] = ImportedAccount(v)
+            elif v.get('xpub3'):
+                self.accounts[k] = BIP32_Account_2of3(v)
+            elif v.get('xpub2'):
+                self.accounts[k] = BIP32_Account_2of2(v)
+            elif v.get('xpub'):
+                self.accounts[k] = BIP32_Account(v)
+            elif v.get('pending'):
+                self.accounts[k] = PendingAccount(v)
+            else:
+                print_error("cannot load account", v)
+
+
+    def synchronize(self):
+        pass
+
+    def can_create_accounts(self):
+        return False
 
     def set_up_to_date(self,b):
         with self.lock: self.up_to_date = b
-
 
     def is_up_to_date(self):
         with self.lock: return self.up_to_date
@@ -253,149 +264,39 @@ class NewWallet:
         while not self.is_up_to_date(): 
             time.sleep(0.1)
 
+    def is_imported(self, addr):
+        account = self.accounts.get(IMPORTED_ACCOUNT)
+        if account: 
+            return addr in account.get_addresses(0)
+        else:
+            return False
 
     def import_key(self, sec, password):
-        # check password
-        seed = self.get_seed(password)
         try:
-            address = address_from_private_key(sec)
+            pubkey = public_key_from_private_key(sec)
+            address = public_key_to_bc_address(pubkey.decode('hex'))
         except Exception:
             raise Exception('Invalid private key')
 
         if self.is_mine(address):
             raise Exception('Address already in wallet')
         
-        # store the originally requested keypair into the imported keys table
-        self.imported_keys[address] = pw_encode(sec, password )
-        self.storage.put('imported_keys', self.imported_keys, True)
+        if self.accounts.get(IMPORTED_ACCOUNT) is None:
+            self.accounts[IMPORTED_ACCOUNT] = ImportedAccount({'imported':{}})
+        self.accounts[IMPORTED_ACCOUNT].add(address, pubkey, sec, password)
+        self.save_accounts()
+        
         if self.synchronizer:
             self.synchronizer.subscribe_to_addresses([address])
         return address
         
+
     def delete_imported_key(self, addr):
-        if addr in self.imported_keys:
-            self.imported_keys.pop(addr)
-            self.storage.put('imported_keys', self.imported_keys, True)
-
-
-    def make_seed(self):
-        import mnemonic, ecdsa
-        entropy = ecdsa.util.randrange( pow(2,160) )
-        nonce = 0
-        while True:
-            ss = "%040x"%(entropy+nonce)
-            s = hashlib.sha256(ss.decode('hex')).digest().encode('hex')
-            # we keep only 13 words, that's approximately 139 bits of entropy
-            words = mnemonic.mn_encode(s)[0:13] 
-            seed = ' '.join(words)
-            if is_new_seed(seed):
-                break  # this will remove 8 bits of entropy
-            nonce += 1
-
-        return seed
-
-
-    def init_seed(self, seed):
-        import mnemonic, unicodedata
-        
-        if self.seed: 
-            raise Exception("a seed exists")
-
-        self.seed_version = NEW_SEED_VERSION
-
-        if not seed:
-            self.seed = self.make_seed()
-            return
-
-        self.seed = unicodedata.normalize('NFC', unicode(seed.strip()))
-
-
-            
-
-    def save_seed(self, password):
-        if password: 
-            self.seed = pw_encode( self.seed, password)
-            self.use_encryption = True
-        self.storage.put('seed', self.seed, True)
-        self.storage.put('seed_version', self.seed_version, True)
-        self.storage.put('use_encryption', self.use_encryption,True)
-        self.create_master_keys(password)
-
-
-    def create_watching_only_wallet(self, xpub):
-        self.master_public_keys = { "m/": xpub }
-        self.storage.put('master_public_keys', self.master_public_keys, True)
-        self.storage.put('seed_version', self.seed_version, True)
-        account = BIP32_Account({'xpub':xpub})
-        self.add_account("m/", account)
-
-
-    def create_accounts(self, password):
-        seed = pw_decode(self.seed, password)
-        self.create_account('Main account', password)
-
-
-    def add_master_public_key(self, name, mpk):
-        self.master_public_keys[name] = mpk
-        self.storage.put('master_public_keys', self.master_public_keys, True)
-
-
-    def create_master_keys(self, password):
-        xpriv, xpub = bip32_root(self.get_seed(password))
-        self.add_master_public_key("m/", xpub)
-        self.master_private_keys["m/"] = pw_encode(xpriv, password)
-        self.storage.put('master_private_keys', self.master_private_keys, True)
-
-
-    def find_root_by_master_key(self, xpub):
-        for key, xpub2 in self.master_public_keys.items():
-            if key == "m/":continue
-            if xpub == xpub2:
-                return key
-
-    def is_watching_only(self):
-        return (self.seed == '') and (self.master_private_keys == {})
-
-
-    def num_accounts(self, account_type = '1of1'):
-        keys = self.accounts.keys()
-        i = 0
-        while True:
-            account_id = self.account_id(account_type, i)
-            if account_id not in keys: break
-            i += 1
-        return i
-
-
-    def next_account_address(self, account_type, password):
-        i = self.num_accounts(account_type)
-        account_id = self.account_id(account_type, i)
-
-        addr = self.next_addresses.get(account_id)
-        if not addr: 
-            account = self.make_account(account_id, password)
-            addr = account.first_address()
-            self.next_addresses[account_id] = addr
-            self.storage.put('next_addresses', self.next_addresses)
-
-        return account_id, addr
-
-    def account_id(self, account_type, i):
-        if account_type == '1of1':
-            return "m/%d'"%i
-        else:
-            raise
-
-    def make_account(self, account_id, password):
-        """Creates and saves the master keys, but does not save the account"""
-        master_xpriv = pw_decode( self.master_private_keys["m/"] , password )
-        xpriv, xpub = bip32_private_derivation(master_xpriv, "m/", account_id)
-        self.master_private_keys[account_id] = pw_encode(xpriv, password)
-        self.master_public_keys[account_id] = xpub
-        self.storage.put('master_public_keys', self.master_public_keys, True)
-        self.storage.put('master_private_keys', self.master_private_keys, True)
-        account = BIP32_Account({'xpub':xpub})
-        return account
+        account = self.accounts[IMPORTED_ACCOUNT]
+        account.remove(addr)
+        if not account.get_addresses(0):
+            self.accounts.pop(IMPORTED_ACCOUNT)
+        self.save_accounts()
 
 
     def set_label(self, name, text = None):
@@ -417,72 +318,10 @@ class NewWallet:
         return changed
 
 
-    def create_account(self, name, password):
-        i = self.num_accounts('1of1')
-        account_id = self.account_id('1of1', i)
-        account = self.make_account(account_id, password)
-        self.add_account(account_id, account)
-        if name:
-            self.set_label(account_id, name)
-
-        # add address of the next account
-        _, _ = self.next_account_address('1of1', password)
-
-
-    def add_account(self, account_id, account):
-        self.accounts[account_id] = account
-        if account_id in self.pending_accounts:
-            self.pending_accounts.pop(account_id)
-            self.storage.put('pending_accounts', self.pending_accounts)
-        self.save_accounts()
-
-
-    def save_accounts(self):
-        d = {}
-        for k, v in self.accounts.items():
-            d[k] = v.dump()
-        self.storage.put('accounts', d, True)
-
-    
-
-    def load_accounts(self):
-        d = self.storage.get('accounts', {})
-        self.accounts = {}
-        for k, v in d.items():
-            if k == 0:
-                v['mpk'] = self.storage.get('master_public_key')
-                self.accounts[k] = OldAccount(v)
-            elif v.get('xpub3'):
-                self.accounts[k] = BIP32_Account_2of3(v)
-            elif v.get('xpub2'):
-                self.accounts[k] = BIP32_Account_2of2(v)
-            elif v.get('xpub'):
-                self.accounts[k] = BIP32_Account(v)
-            else:
-                raise
-
-        self.pending_accounts = self.storage.get('pending_accounts',{})
-
-
-    def delete_pending_account(self, k):
-        self.pending_accounts.pop(k)
-        self.storage.put('pending_accounts', self.pending_accounts)
-
-    def account_is_pending(self, k):
-        return k in self.pending_accounts
-
-    def create_pending_account(self, acct_type, name, password):
-        account_id, addr = self.next_account_address(acct_type, password)
-        self.set_label(account_id, name)
-        self.pending_accounts[account_id] = addr
-        self.storage.put('pending_accounts', self.pending_accounts)
-
-    def get_pending_accounts(self):
-        return self.pending_accounts.items()
 
 
     def addresses(self, include_change = True, _next=True):
-        o = self.get_account_addresses(-1, include_change)
+        o = []
         for a in self.accounts.keys():
             o += self.get_account_addresses(a, include_change)
 
@@ -494,29 +333,17 @@ class NewWallet:
 
 
     def is_mine(self, address):
-        return address in self.addresses(True)
+        return address in self.addresses(True) 
 
 
     def is_change(self, address):
         if not self.is_mine(address): return False
-        if address in self.imported_keys.keys(): return False
         acct, s = self.get_address_index(address)
         if s is None: return False
         return s[0] == 1
 
-    def get_master_public_key(self):
-        return self.storage.get("master_public_keys")["m/"]
-
-    def get_master_private_key(self, account, password):
-        k = self.master_private_keys.get(account)
-        if not k: return
-        xpriv = pw_decode( k, password)
-        return xpriv
-
 
     def get_address_index(self, address):
-        if address in self.imported_keys.keys():
-            return -1, None
 
         for account in self.accounts.keys():
             for for_change in [0,1]:
@@ -535,80 +362,15 @@ class NewWallet:
     def getpubkeys(self, addr):
         assert is_valid(addr) and self.is_mine(addr)
         account, sequence = self.get_address_index(addr)
-        if account != -1:
-            a = self.accounts[account]
-            return a.get_pubkeys( sequence )
+        a = self.accounts[account]
+        return a.get_pubkeys( sequence )
 
-
-    def get_roots(self, account):
-        roots = []
-        for a in account.split('&'):
-            s = a.strip()
-            m = re.match("m/(\d+')", s)
-            roots.append( m.group(1) )
-        return roots
-
-
-    def is_seeded(self, account):
-        return True
-
-
-        for root in self.get_roots(account):
-            if root not in self.master_private_keys.keys(): 
-                return False
-        return True
-
-    def rebase_sequence(self, account, sequence):
-        # account has one or more xpub
-        # sequence is a sequence of public derivations
-        c, i = sequence
-        dd = []
-        for a in account.split('&'):
-            s = a.strip()
-            m = re.match("m/(\d+)'", s)
-            root = "m/"
-            num = int(m.group(1))
-            dd.append( (root, [num,c,i] ) )
-        return dd
-        
-
-
-
-
-    def get_seed(self, password):
-        s = pw_decode(self.seed, password)
-        seed = mnemonic_to_seed(s,'').encode('hex')
-        return seed
-
-
-    def get_mnemonic(self, password):
-        return pw_decode(self.seed, password)
-        
 
     def get_private_key(self, address, password):
         if self.is_watching_only():
             return []
-
-        # first check the provided password
-        seed = self.get_seed(password)
-
-        out = []
-        if address in self.imported_keys.keys():
-            out.append( pw_decode( self.imported_keys[address], password ) )
-        else:
-            account_id, sequence = self.get_address_index(address)
-            account = self.accounts[account_id]
-            xpubs = account.get_master_pubkeys()
-            roots = [k for k, v in self.master_public_keys.iteritems() if v in xpubs]
-            for root in roots:
-                xpriv = self.get_master_private_key(root, password)
-                if not xpriv:
-                    continue
-                _, _, _, c, k = deserialize_xkey(xpriv)
-                pk = bip32_private_key( sequence, k, c )
-                out.append(pk)
-                    
-        return out
+        account_id, sequence = self.get_address_index(address)
+        return self.accounts[account_id].get_private_key(sequence, self, password)
 
 
     def get_public_keys(self, address):
@@ -625,8 +387,7 @@ class NewWallet:
             for sec in private_keys:
                 pubkey = public_key_from_private_key(sec)
                 keypairs[ pubkey ] = sec
-                if address in self.imported_keys.keys():
-                    txin['redeemPubkey'] = pubkey
+
 
 
     def add_keypairs_from_KeyID(self, tx, keypairs, password):
@@ -666,29 +427,24 @@ class NewWallet:
         # check that the password is correct
         seed = self.get_seed(password)
 
-        # add input info
-        tx.add_input_info(input_info)
-
-        # add redeem script for coins that are in the wallet
-        # FIXME: add redeemPubkey too!
-
-        try:
+        # if input_info is not known, build it using wallet UTXOs
+        if not input_info:
+            input_info = []
             unspent_coins = self.get_unspent_coins()
-        except:
-            # an exception may be raised is the wallet is not synchronized
-            unspent_coins = []
+            for txin in tx.inputs:
+                for item in unspent_coins:
+                    if txin['prevout_hash'] == item['prevout_hash'] and txin['prevout_n'] == item['prevout_n']:
+                        info = { 'address':item['address'], 'scriptPubKey':item['scriptPubKey'] }
+                        self.add_input_info(info)
+                        input_info.append(info)
+                        break
+                else:
+                    print_error( "input not in UTXOs" )
+                    input_info.append(None)
 
-        for txin in tx.inputs:
-            for item in unspent_coins:
-                if txin['prevout_hash'] == item['prevout_hash'] and txin['prevout_n'] == item['prevout_n']:
-                    print_error( "tx input is in unspent coins" )
-                    txin['scriptPubKey'] = item['scriptPubKey']
-                    account, sequence = self.get_address_index(item['address'])
-                    if account != -1:
-                        txin['redeemScript'] = self.accounts[account].redeem_script(sequence)
-                        print_error("added redeemScript", txin['redeemScript'])
-                    break
-
+        # add input_info to the transaction
+        print_error("input_info", input_info)
+        tx.add_input_info(input_info)
 
         # build a list of public/private keys
         keypairs = {}
@@ -700,9 +456,9 @@ class NewWallet:
 
         # add private_keys from KeyID
         self.add_keypairs_from_KeyID(tx, keypairs, password)
-
         # add private keys from wallet
         self.add_keypairs_from_wallet(tx, keypairs, password)
+        # sign the transaction
         self.sign_transaction(tx, keypairs, password)
 
 
@@ -724,115 +480,6 @@ class NewWallet:
         decrypted = ec.decrypt_message(message)
         return decrypted[0]
 
-
-    def change_gap_limit(self, value):
-        if value >= self.gap_limit:
-            self.gap_limit = value
-            self.storage.put('gap_limit', self.gap_limit, True)
-            #self.interface.poke('synchronizer')
-            return True
-
-        elif value >= self.min_acceptable_gap():
-            for key, account in self.accounts.items():
-                addresses = account[0]
-                k = self.num_unused_trailing_addresses(addresses)
-                n = len(addresses) - k + value
-                addresses = addresses[0:n]
-                self.accounts[key][0] = addresses
-
-            self.gap_limit = value
-            self.storage.put('gap_limit', self.gap_limit, True)
-            self.save_accounts()
-            return True
-        else:
-            return False
-
-    def num_unused_trailing_addresses(self, addresses):
-        k = 0
-        for a in addresses[::-1]:
-            if self.history.get(a):break
-            k = k + 1
-        return k
-
-    def min_acceptable_gap(self):
-        # fixme: this assumes wallet is synchronized
-        n = 0
-        nmax = 0
-
-        for account in self.accounts.values():
-            addresses = account.get_addresses(0)
-            k = self.num_unused_trailing_addresses(addresses)
-            for a in addresses[0:-k]:
-                if self.history.get(a):
-                    n = 0
-                else:
-                    n += 1
-                    if n > nmax: nmax = n
-        return nmax + 1
-
-
-    def address_is_old(self, address):
-        age = -1
-        h = self.history.get(address, [])
-        if h == ['*']:
-            return True
-        for tx_hash, tx_height in h:
-            if tx_height == 0:
-                tx_age = 0
-            else:
-                tx_age = self.network.get_local_height() - tx_height + 1
-            if tx_age > age:
-                age = tx_age
-        return age > 2
-
-
-    def synchronize_sequence(self, account, for_change):
-        limit = self.gap_limit_for_change if for_change else self.gap_limit
-        new_addresses = []
-        while True:
-            addresses = account.get_addresses(for_change)
-            if len(addresses) < limit:
-                address = account.create_new_address(for_change)
-                self.history[address] = []
-                new_addresses.append( address )
-                continue
-
-            if map( lambda a: self.address_is_old(a), addresses[-limit:] ) == limit*[False]:
-                break
-            else:
-                address = account.create_new_address(for_change)
-                self.history[address] = []
-                new_addresses.append( address )
-
-        return new_addresses
-        
-
-    def check_pending_accounts(self):
-        for account_id, addr in self.next_addresses.items():
-            if self.address_is_old(addr):
-                print_error( "creating account", account_id )
-                xpub = self.master_public_keys[account_id]
-                account = BIP32_Account({'xpub':xpub})
-                self.add_account(account_id, account)
-                self.next_addresses.pop(account_id)
-
-
-    def synchronize_account(self, account):
-        new = []
-        new += self.synchronize_sequence(account, 0)
-        new += self.synchronize_sequence(account, 1)
-        return new
-
-
-    def synchronize(self):
-        self.check_pending_accounts()
-        new = []
-        for account in self.accounts.values():
-            new += self.synchronize_account(account)
-        if new:
-            self.save_accounts()
-            self.storage.put('addr_history', self.history, True)
-        return new
 
 
     def is_found(self):
@@ -894,7 +541,7 @@ class NewWallet:
 
 
     def get_addr_balance(self, address):
-        assert self.is_mine(address)
+        #assert self.is_mine(address)
         h = self.history.get(address,[])
         if h == ['*']: return 0,0
         c = u = 0
@@ -935,45 +582,25 @@ class NewWallet:
 
 
     def get_account_name(self, k):
-        default = "Unnamed account"
-        m = re.match("m/0'/(\d+)", k)
-        if m:
-            num = m.group(1)
-            if num == '0':
-                default = "Main account"
-            else:
-                default = "Account %s"%num
-                    
-        m = re.match("m/1'/(\d+) & m/2'/(\d+)", k)
-        if m:
-            num = m.group(1)
-            default = "2of2 account %s"%num
-        name = self.labels.get(k, default)
-        return name
+        return self.labels.get(k, self.accounts[k].get_name(k))
 
 
     def get_account_names(self):
-        accounts = {}
-        for k, account in self.accounts.items():
-            accounts[k] = self.get_account_name(k)
-        if self.imported_keys:
-            accounts[-1] = 'Imported keys'
-        return accounts
+        account_names = {}
+        for k in self.accounts.keys():
+            account_names[k] = self.get_account_name(k)
+        return account_names
 
 
     def get_account_addresses(self, a, include_change=True):
         if a is None:
             o = self.addresses(True)
-        elif a == -1:
-            o = self.imported_keys.keys()
-        else:
+        elif a in self.accounts:
             ac = self.accounts[a]
             o = ac.get_addresses(0)
             if include_change: o += ac.get_addresses(1)
         return o
 
-    def get_imported_balance(self):
-        return self.get_balance(self.imported_keys.keys())
 
     def get_account_balance(self, account):
         return self.get_balance(self.get_account_addresses(account))
@@ -1069,7 +696,7 @@ class NewWallet:
                 address = inputs[0].get('address')
                 account, _ = self.get_address_index(address)
 
-                if not self.use_change or account == -1:
+                if not self.use_change or account == IMPORTED_ACCOUNT:
                     change_addr = inputs[-1]['address']
                 else:
                     change_addr = self.accounts[account].get_addresses(1)[-self.gap_limit_for_change]
@@ -1218,7 +845,8 @@ class NewWallet:
         inputs, total, fee = self.choose_tx_inputs( amount, fee, len(outputs), domain )
         if not inputs:
             raise ValueError("Not enough funds")
-        self.add_input_info(inputs)
+        for txin in inputs:
+            self.add_input_info(txin)
         outputs = self.add_tx_change(inputs, outputs, amount, fee, total, change_addr)
         return Transaction.from_io(inputs, outputs)
 
@@ -1232,19 +860,16 @@ class NewWallet:
         return tx
 
 
-    def add_input_info(self, inputs):
-        for txin in inputs:
-            address = txin['address']
-            if address in self.imported_keys.keys():
-                continue
-            account_id, sequence = self.get_address_index(address)
-            account = self.accounts[account_id]
-            txin['KeyID'] = account.get_keyID(sequence)
-            redeemScript = account.redeem_script(sequence)
-            if redeemScript: 
-                txin['redeemScript'] = redeemScript
-            else:
-                txin['redeemPubkey'] = account.get_pubkey(*sequence)
+    def add_input_info(self, txin):
+        address = txin['address']
+        account_id, sequence = self.get_address_index(address)
+        account = self.accounts[account_id]
+        txin['KeyID'] = account.get_keyID(sequence)
+        redeemScript = account.redeem_script(sequence)
+        if redeemScript: 
+            txin['redeemScript'] = redeemScript
+        else:
+            txin['redeemPubkey'] = account.get_pubkey(*sequence)
 
 
     def sign_transaction(self, tx, keypairs, password):
@@ -1276,26 +901,28 @@ class NewWallet:
         return True, out
 
 
-
     def update_password(self, old_password, new_password):
-        if new_password == '': new_password = None
-        decoded = self.get_seed(old_password)
-        self.seed = pw_encode( decoded, new_password)
-        self.storage.put('seed', self.seed, True)
-        self.use_encryption = (new_password != None)
-        self.storage.put('use_encryption', self.use_encryption,True)
-        for k in self.imported_keys.keys():
-            a = self.imported_keys[k]
-            b = pw_decode(a, old_password)
-            c = pw_encode(b, new_password)
-            self.imported_keys[k] = c
-        self.storage.put('imported_keys', self.imported_keys, True)
+        if new_password == '': 
+            new_password = None
+
+        if self.has_seed():
+            decoded = self.get_seed(old_password)
+            self.seed = pw_encode( decoded, new_password)
+            self.storage.put('seed', self.seed, True)
+
+        imported_account = self.accounts.get(IMPORTED_ACCOUNT)
+        if imported_account: 
+            imported_account.update_password(old_password, new_password)
+            self.save_accounts()
 
         for k, v in self.master_private_keys.items():
             b = pw_decode(v, old_password)
             c = pw_encode(b, new_password)
             self.master_private_keys[k] = c
         self.storage.put('master_private_keys', self.master_private_keys, True)
+
+        self.use_encryption = (new_password != None)
+        self.storage.put('use_encryption', self.use_encryption,True)
 
 
     def freeze(self,addr):
@@ -1305,6 +932,7 @@ class NewWallet:
             return True
         else:
             return False
+
 
     def unfreeze(self,addr):
         if self.is_mine(addr) and addr in self.frozen_addresses:
@@ -1326,13 +954,11 @@ class NewWallet:
                     # add it in case it was previously unconfirmed
                     self.verifier.add(tx_hash, tx_height)
 
-
         # if we are on a pruning server, remove unverified transactions
         vr = self.verifier.transactions.keys() + self.verifier.verified_tx.keys()
         for tx_hash in self.transactions.keys():
             if tx_hash not in vr:
                 self.transactions.pop(tx_hash)
-
 
 
     def check_new_history(self, addr, hist):
@@ -1394,7 +1020,6 @@ class NewWallet:
         return True
 
 
-
     def check_new_tx(self, tx_hash, tx):
         # 1 check that tx is referenced in addr_history. 
         addresses = []
@@ -1433,6 +1058,203 @@ class NewWallet:
             self.verifier.stop()
             self.synchronizer.stop()
 
+    def restore(self, cb):
+        pass
+
+    def get_accounts(self):
+        return self.accounts
+
+    def save_accounts(self):
+        d = {}
+        for k, v in self.accounts.items():
+            d[k] = v.dump()
+        self.storage.put('accounts', d, True)
+
+    def can_import(self):
+        return not self.is_watching_only()
+
+    def is_used(self, address):
+        h = self.history.get(address,[])
+        c, u = self.get_addr_balance(address)
+        return len(h), len(h) > 0 and c == -u
+    
+
+class Imported_Wallet(Abstract_Wallet):
+
+    def __init__(self, storage):
+        Abstract_Wallet.__init__(self, storage)
+        a = self.accounts.get(IMPORTED_ACCOUNT)
+        if not a:
+            self.accounts[IMPORTED_ACCOUNT] = ImportedAccount({'imported':{}})
+        self.storage.put('wallet_type', 'imported', True)
+
+
+    def is_watching_only(self):
+        acc = self.accounts[IMPORTED_ACCOUNT]
+        n = acc.keypairs.values()
+        return n == [(None, None)] * len(n)
+
+    def has_seed(self):
+        return False
+
+    def is_deterministic(self):
+        return False
+
+    def check_password(self, password):
+        self.accounts[IMPORTED_ACCOUNT].get_private_key((0,0), self, password)
+
+    def is_used(self, address):
+        h = self.history.get(address,[])
+        return len(h), False
+
+
+class Deterministic_Wallet(Abstract_Wallet):
+
+    def __init__(self, storage):
+        Abstract_Wallet.__init__(self, storage)
+
+    def has_seed(self):
+        return self.seed != ''
+
+    def is_deterministic(self):
+        return True
+
+    def is_watching_only(self):
+        return not self.has_seed()
+
+    def add_seed(self, seed, password):
+        if self.seed: 
+            raise Exception("a seed exists")
+        
+        self.seed_version, self.seed = self.prepare_seed(seed)
+        if password: 
+            self.seed = pw_encode( self.seed, password)
+            self.use_encryption = True
+        else:
+            self.use_encryption = False
+
+        self.storage.put('seed', self.seed, True)
+        self.storage.put('seed_version', self.seed_version, True)
+        self.storage.put('use_encryption', self.use_encryption,True)
+        self.create_master_keys(password)
+
+    def get_seed(self, password):
+        return pw_decode(self.seed, password)
+
+    def get_mnemonic(self, password):
+        return self.get_seed(password)
+        
+    def change_gap_limit(self, value):
+        if value >= self.gap_limit:
+            self.gap_limit = value
+            self.storage.put('gap_limit', self.gap_limit, True)
+            #self.interface.poke('synchronizer')
+            return True
+
+        elif value >= self.min_acceptable_gap():
+            for key, account in self.accounts.items():
+                addresses = account[0]
+                k = self.num_unused_trailing_addresses(addresses)
+                n = len(addresses) - k + value
+                addresses = addresses[0:n]
+                self.accounts[key][0] = addresses
+
+            self.gap_limit = value
+            self.storage.put('gap_limit', self.gap_limit, True)
+            self.save_accounts()
+            return True
+        else:
+            return False
+
+    def num_unused_trailing_addresses(self, addresses):
+        k = 0
+        for a in addresses[::-1]:
+            if self.history.get(a):break
+            k = k + 1
+        return k
+
+    def min_acceptable_gap(self):
+        # fixme: this assumes wallet is synchronized
+        n = 0
+        nmax = 0
+
+        for account in self.accounts.values():
+            addresses = account.get_addresses(0)
+            k = self.num_unused_trailing_addresses(addresses)
+            for a in addresses[0:-k]:
+                if self.history.get(a):
+                    n = 0
+                else:
+                    n += 1
+                    if n > nmax: nmax = n
+        return nmax + 1
+
+
+    def address_is_old(self, address):
+        age = -1
+        h = self.history.get(address, [])
+        if h == ['*']:
+            return True
+        for tx_hash, tx_height in h:
+            if tx_height == 0:
+                tx_age = 0
+            else:
+                tx_age = self.network.get_local_height() - tx_height + 1
+            if tx_age > age:
+                age = tx_age
+        return age > 2
+
+
+    def synchronize_sequence(self, account, for_change):
+        limit = self.gap_limit_for_change if for_change else self.gap_limit
+        new_addresses = []
+        while True:
+            addresses = account.get_addresses(for_change)
+            if len(addresses) < limit:
+                address = account.create_new_address(for_change)
+                self.history[address] = []
+                new_addresses.append( address )
+                continue
+
+            if map( lambda a: self.address_is_old(a), addresses[-limit:] ) == limit*[False]:
+                break
+            else:
+                address = account.create_new_address(for_change)
+                self.history[address] = []
+                new_addresses.append( address )
+
+        return new_addresses
+        
+
+    def check_pending_accounts(self):
+        for account_id, addr in self.next_addresses.items():
+            if self.address_is_old(addr):
+                print_error( "creating account", account_id )
+                xpub = self.master_public_keys[account_id]
+                account = BIP32_Account({'xpub':xpub})
+                self.add_account(account_id, account)
+                self.next_addresses.pop(account_id)
+
+
+    def synchronize_account(self, account):
+        new = []
+        new += self.synchronize_sequence(account, 0)
+        new += self.synchronize_sequence(account, 1)
+        return new
+
+
+    def synchronize(self):
+        self.check_pending_accounts()
+        new = []
+        for account in self.accounts.values():
+            if type(account) in [ImportedAccount, PendingAccount]:
+                continue
+            new += self.synchronize_account(account)
+        if new:
+            self.save_accounts()
+            self.storage.put('addr_history', self.history, True)
+        return new
+
 
     def restore(self, callback):
         from i18n import _
@@ -1465,6 +1287,178 @@ class NewWallet:
         self.fill_addressbook()
 
 
+    def create_account(self, name, password):
+        i = self.num_accounts()
+        account_id = self.account_id(i)
+        account = self.make_account(account_id, password)
+        self.add_account(account_id, account)
+        if name:
+            self.set_label(account_id, name)
+
+        # add address of the next account
+        _, _ = self.next_account_address(password)
+
+
+    def add_account(self, account_id, account):
+        self.accounts[account_id] = account
+        self.save_accounts()
+
+
+
+    def account_is_pending(self, k):
+        return type(self.accounts.get(k)) == PendingAccount
+
+    def delete_pending_account(self, k):
+        assert self.account_is_pending(k)
+        self.accounts.pop(k)
+        self.save_accounts()
+
+    def create_pending_account(self, name, password):
+        account_id, addr = self.next_account_address(password)
+        self.set_label(account_id, name)
+        self.accounts[account_id] = PendingAccount({'pending':addr})
+        self.save_accounts()
+
+
+
+
+class NewWallet(Deterministic_Wallet):
+
+    def __init__(self, storage):
+        Deterministic_Wallet.__init__(self, storage)
+
+    def can_create_accounts(self):
+        return not self.is_watching_only()
+
+    def get_master_public_key(self):
+        return self.master_public_keys["m/"]
+
+    def get_master_public_keys(self):
+        out = {}
+        for k, account in self.accounts.items():
+            name = self.get_account_name(k)
+            mpk_text = '\n\n'.join( account.get_master_pubkeys() )
+            out[name] = mpk_text
+        return out
+
+    def get_master_private_key(self, account, password):
+        k = self.master_private_keys.get(account)
+        if not k: return
+        xpriv = pw_decode( k, password)
+        return xpriv
+
+    def check_password(self, password):
+        xpriv = self.get_master_private_key( "m/", password )
+        xpub = self.master_public_keys["m/"]
+        assert deserialize_xkey(xpriv)[3] == deserialize_xkey(xpub)[3]
+
+    def create_watching_only_wallet(self, xpub):
+        self.storage.put('seed_version', self.seed_version, True)
+        self.add_master_public_key("m/", xpub)
+        account = BIP32_Account({'xpub':xpub})
+        self.add_account("m/", account)
+
+
+    def create_accounts(self, password):
+        seed = pw_decode(self.seed, password)
+        self.create_account('Main account', password)
+
+
+    def add_master_public_key(self, name, mpk):
+        self.master_public_keys[name] = mpk
+        self.storage.put('master_public_keys', self.master_public_keys, True)
+
+
+    def add_master_private_key(self, name, xpriv, password):
+        self.master_private_keys[name] = pw_encode(xpriv, password)
+        self.storage.put('master_private_keys', self.master_private_keys, True)
+
+
+    def add_master_keys(self, root, account_id, password):
+        x = self.master_private_keys.get(root)
+        if x: 
+            master_xpriv = pw_decode(x, password )
+            xpriv, xpub = bip32_private_derivation(master_xpriv, root, account_id)
+            self.add_master_public_key(account_id, xpub)
+            self.add_master_private_key(account_id, xpriv, password)
+        else:
+            master_xpub = self.master_public_keys[root]
+            xpub = bip32_public_derivation(master_xpub, root, account_id)
+            self.add_master_public_key(account_id, xpub)
+        return xpub
+
+
+    def create_master_keys(self, password):
+        xpriv, xpub = bip32_root(mnemonic_to_seed(self.get_seed(password),'').encode('hex'))
+        self.add_master_public_key("m/", xpub)
+        self.add_master_private_key("m/", xpriv, password)
+
+
+    def find_root_by_master_key(self, xpub):
+        for key, xpub2 in self.master_public_keys.items():
+            if key == "m/":continue
+            if xpub == xpub2:
+                return key
+
+
+    def num_accounts(self):
+        keys = []
+        for k, v in self.accounts.items():
+            if type(v) != BIP32_Account:
+                continue
+            keys.append(k)
+
+        i = 0
+        while True:
+            account_id = self.account_id(i)
+            if account_id not in keys: break
+            i += 1
+        return i
+
+
+    def next_account_address(self, password):
+        i = self.num_accounts()
+        account_id = self.account_id(i)
+
+        addr = self.next_addresses.get(account_id)
+        if not addr: 
+            account = self.make_account(account_id, password)
+            addr = account.first_address()
+            self.next_addresses[account_id] = addr
+            self.storage.put('next_addresses', self.next_addresses)
+
+        return account_id, addr
+
+    def account_id(self, i):
+        return "m/%d'"%i
+
+    def make_account(self, account_id, password):
+        """Creates and saves the master keys, but does not save the account"""
+        xpub = self.add_master_keys("m/", account_id, password)
+        account = BIP32_Account({'xpub':xpub})
+        return account
+
+
+    def make_seed(self):
+        import mnemonic, ecdsa
+        entropy = ecdsa.util.randrange( pow(2,160) )
+        nonce = 0
+        while True:
+            ss = "%040x"%(entropy+nonce)
+            s = hashlib.sha256(ss.decode('hex')).digest().encode('hex')
+            # we keep only 13 words, that's approximately 139 bits of entropy
+            words = mnemonic.mn_encode(s)[0:13] 
+            seed = ' '.join(words)
+            if is_new_seed(seed):
+                break  # this will remove 8 bits of entropy
+            nonce += 1
+        return seed
+
+    def prepare_seed(self, seed):
+        import unicodedata
+        return NEW_SEED_VERSION, unicodedata.normalize('NFC', unicode(seed.strip()))
+
+
 
 class Wallet_2of2(NewWallet):
 
@@ -1472,276 +1466,107 @@ class Wallet_2of2(NewWallet):
         NewWallet.__init__(self, storage)
         self.storage.put('wallet_type', '2of2', True)
 
-    def init_cold_seed(self):
-        cold_seed = self.make_seed()
-        seed = mnemonic_to_seed(cold_seed,'').encode('hex')
-        xpriv, xpub = bip32_root(seed)
-        self.master_public_keys["cold/"] = xpub
-        return cold_seed
+    def can_create_accounts(self):
+        return False
 
-    def save_cold_seed(self):
-        self.storage.put('master_public_keys', self.master_public_keys, True)
+    def can_import(self):
+        return False
 
+    def create_account(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        account = BIP32_Account_2of2({'xpub':xpub1, 'xpub2':xpub2})
+        self.add_account('m/', account)
 
-    def make_account(self, account_id, password):
-        # if accounts are hardened, we cannot make it symmetric on the other wallet
+    def get_master_public_keys(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        return {'hot':xpub1, 'cold':xpub2}
 
-        """Creates and saves the master keys, but does not save the account"""
-        master_xpriv = pw_decode( self.master_private_keys["m/"] , password )
-        xpriv, xpub = bip32_private_derivation(master_xpriv, "m/", account_id)
-        self.master_private_keys[account_id] = pw_encode(xpriv, password)
-        self.master_public_keys[account_id] = xpub
-        self.storage.put('master_public_keys', self.master_public_keys, True)
-        self.storage.put('master_private_keys', self.master_private_keys, True)
+    def get_action(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        if xpub1 is None:
+            return 'create_2of2_1'
+        if xpub2 is None:
+            return 'create_2of2_2'
 
-        xpub_cold = self.master_public_keys["cold/"]
-        account = BIP32_Account_2of2({'xpub':xpub, 'xpub2':xpub_cold})
-        return account
 
 
 class Wallet_2of3(Wallet_2of2):
 
     def __init__(self, storage):
-        NewWallet.__init__(self, storage)
+        Wallet_2of2.__init__(self, storage)
         self.storage.put('wallet_type', '2of3', True)
 
-    def make_account(self, account_id, password):
-        # if accounts are hardened, we cannot make it symmetric on the other wallet
+    def create_account(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        xpub3 = self.master_public_keys.get("remote/")
+        account = BIP32_Account_2of3({'xpub':xpub1, 'xpub2':xpub2, 'xpub3':xpub3})
+        self.add_account('m/', account)
 
-        """Creates and saves the master keys, but does not save the account"""
-        master_xpriv = pw_decode( self.master_private_keys["m/"] , password )
-        xpriv, xpub = bip32_private_derivation(master_xpriv, "m/", account_id)
-        self.master_private_keys[account_id] = pw_encode(xpriv, password)
-        self.master_public_keys[account_id] = xpub
-        self.storage.put('master_public_keys', self.master_public_keys, True)
-        self.storage.put('master_private_keys', self.master_private_keys, True)
+    def get_master_public_keys(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        xpub3 = self.master_public_keys.get("remote/")
+        return {'hot':xpub1, 'cold':xpub2, 'remote':xpub3}
 
-        xpub_cold = self.master_public_keys["cold/"]
-        xpub_remote = self.master_public_keys["remote/"]
-        account = BIP32_Account_2of3({'xpub':xpub, 'xpub2':xpub_cold, 'xpub3':xpub_remote})
-        return account
-
-
-
-
-class WalletSynchronizer(threading.Thread):
-
-
-    def __init__(self, wallet, network):
-        threading.Thread.__init__(self)
-        self.daemon = True
-        self.wallet = wallet
-        self.network = network
-        self.was_updated = True
-        self.running = False
-        self.lock = threading.Lock()
-        self.queue = Queue.Queue()
-
-    def stop(self):
-        with self.lock: self.running = False
-
-    def is_running(self):
-        with self.lock: return self.running
-
-    
-    def subscribe_to_addresses(self, addresses):
-        messages = []
-        for addr in addresses:
-            messages.append(('blockchain.address.subscribe', [addr]))
-        self.network.subscribe( messages, lambda i,r: self.queue.put(r))
-
-
-    def run(self):
-        with self.lock:
-            self.running = True
-
-        while self.is_running():
-
-            if not self.network.is_connected():
-                self.network.wait_until_connected()
-                
-            self.run_interface()
-
-
-    def run_interface(self):
-
-        print_error("synchronizer: connected to", self.network.main_server())
-
-        requested_tx = []
-        missing_tx = []
-        requested_histories = {}
-
-        # request any missing transactions
-        for history in self.wallet.history.values():
-            if history == ['*']: continue
-            for tx_hash, tx_height in history:
-                if self.wallet.transactions.get(tx_hash) is None and (tx_hash, tx_height) not in missing_tx:
-                    missing_tx.append( (tx_hash, tx_height) )
-
-        if missing_tx:
-            print_error("missing tx", missing_tx)
-
-        # subscriptions
-        self.subscribe_to_addresses(self.wallet.addresses(True))
-
-        while self.is_running():
-            # 1. create new addresses
-            new_addresses = self.wallet.synchronize()
-
-            # request missing addresses
-            if new_addresses:
-                self.subscribe_to_addresses(new_addresses)
-
-            # request missing transactions
-            for tx_hash, tx_height in missing_tx:
-                if (tx_hash, tx_height) not in requested_tx:
-                    self.network.send([ ('blockchain.transaction.get',[tx_hash, tx_height]) ], lambda i,r: self.queue.put(r))
-                    requested_tx.append( (tx_hash, tx_height) )
-            missing_tx = []
-
-            # detect if situation has changed
-            if self.network.is_up_to_date() and self.queue.empty():
-                if not self.wallet.is_up_to_date():
-                    self.wallet.set_up_to_date(True)
-                    self.was_updated = True
-            else:
-                if self.wallet.is_up_to_date():
-                    self.wallet.set_up_to_date(False)
-                    self.was_updated = True
-
-            if self.was_updated:
-                self.network.trigger_callback('updated')
-                self.was_updated = False
-
-            # 2. get a response
-            try:
-                r = self.queue.get(block=True, timeout=1)
-            except Queue.Empty:
-                continue
-
-            # see if it changed
-            #if interface != self.network.interface:
-            #    break
-            
-            if not r:
-                continue
-
-            # 3. handle response
-            method = r['method']
-            params = r['params']
-            result = r.get('result')
-            error = r.get('error')
-            if error:
-                print "error", r
-                continue
-
-            if method == 'blockchain.address.subscribe':
-                addr = params[0]
-                if self.wallet.get_status(self.wallet.get_history(addr)) != result:
-                    if requested_histories.get(addr) is None:
-                        self.network.send([('blockchain.address.get_history', [addr])], lambda i,r:self.queue.put(r))
-                        requested_histories[addr] = result
-
-            elif method == 'blockchain.address.get_history':
-                addr = params[0]
-                print_error("receiving history", addr, result)
-                if result == ['*']:
-                    assert requested_histories.pop(addr) == '*'
-                    self.wallet.receive_history_callback(addr, result)
-                else:
-                    hist = []
-                    # check that txids are unique
-                    txids = []
-                    for item in result:
-                        tx_hash = item['tx_hash']
-                        if tx_hash not in txids:
-                            txids.append(tx_hash)
-                            hist.append( (tx_hash, item['height']) )
-
-                    if len(hist) != len(result):
-                        raise Exception("error: server sent history with non-unique txid", result)
-
-                    # check that the status corresponds to what was announced
-                    rs = requested_histories.pop(addr)
-                    if self.wallet.get_status(hist) != rs:
-                        raise Exception("error: status mismatch: %s"%addr)
-                
-                    # store received history
-                    self.wallet.receive_history_callback(addr, hist)
-
-                    # request transactions that we don't have 
-                    for tx_hash, tx_height in hist:
-                        if self.wallet.transactions.get(tx_hash) is None:
-                            if (tx_hash, tx_height) not in requested_tx and (tx_hash, tx_height) not in missing_tx:
-                                missing_tx.append( (tx_hash, tx_height) )
-
-            elif method == 'blockchain.transaction.get':
-                tx_hash = params[0]
-                tx_height = params[1]
-                assert tx_hash == hash_encode(Hash(result.decode('hex')))
-                tx = Transaction(result)
-                self.wallet.receive_tx_callback(tx_hash, tx, tx_height)
-                self.was_updated = True
-                requested_tx.remove( (tx_hash, tx_height) )
-                print_error("received tx:", tx_hash, len(tx.raw))
-
-            else:
-                print_error("Error: Unknown message:" + method + ", " + repr(params) + ", " + repr(result) )
-
-            if self.was_updated and not requested_tx:
-                self.network.trigger_callback('updated')
-                # Updated gets called too many times from other places as well; if we use that signal we get the notification three times
-                self.network.trigger_callback("new_transaction") 
-                self.was_updated = False
+    def get_action(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        xpub3 = self.master_public_keys.get("remote/")
+        # fixme: we use order of creation
+        if xpub2 and xpub1 is None:
+            return 'create_2fa_2'
+        if xpub1 is None:
+            return 'create_2of3_1'
+        if xpub2 is None or xpub3 is None:
+            return 'create_2of3_2'
 
 
 
 
-class OldWallet(NewWallet):
 
-    def init_seed(self, seed):
+class OldWallet(Deterministic_Wallet):
+
+    def make_seed(self):
         import mnemonic
-        
-        if self.seed: 
-            raise Exception("a seed exists")
+        seed = random_seed(128)
+        return ' '.join(mnemonic.mn_encode(seed))
 
-        if not seed:
-            seed = random_seed(128)
-
-        self.seed_version = OLD_SEED_VERSION
-
+    def prepare_seed(self, seed):
+        import mnemonic
         # see if seed was entered as hex
         seed = seed.strip()
         try:
             assert seed
             seed.decode('hex')
-            self.seed = str(seed)
-            return
+            return OLD_SEED_VERSION, str(seed)
         except Exception:
             pass
 
         words = seed.split()
-        try:
-            mnemonic.mn_decode(words)
-        except Exception:
-            raise
-
-        self.seed = mnemonic.mn_decode(words)
-
-        if not self.seed:
+        seed = mnemonic.mn_decode(words)
+        if not seed:
             raise Exception("Invalid seed")
             
+        return OLD_SEED_VERSION, seed
+
 
     def create_master_keys(self, password):
-        seed = pw_decode(self.seed, password)
+        seed = self.get_seed(password)
         mpk = OldAccount.mpk_from_seed(seed)
         self.storage.put('master_public_key', mpk, True)
 
     def get_master_public_key(self):
         return self.storage.get("master_public_key")
 
+    def get_master_public_keys(self):
+        return {'Main Account':self.get_master_public_key()}
+
     def create_accounts(self, password):
-        mpk = self.get_master_public_key()
+        mpk = self.storage.get("master_public_key")
         self.create_account(mpk)
 
     def create_account(self, mpk):
@@ -1755,19 +1580,21 @@ class OldWallet(NewWallet):
         self.create_account(mpk)
 
     def get_seed(self, password):
+        seed = pw_decode(self.seed, password).encode('utf8')
+        return seed
+
+    def check_password(self, password):
         seed = pw_decode(self.seed, password)
         self.accounts[0].check_seed(seed)
-        return seed
 
     def get_mnemonic(self, password):
         import mnemonic
-        s = pw_decode(self.seed, password)
+        s = self.get_seed(password)
         return ' '.join(mnemonic.mn_encode(s))
 
 
     def add_keypairs_from_KeyID(self, tx, keypairs, password):
         # first check the provided password
-        seed = self.get_seed(password)
         for txin in tx.inputs:
             keyid = txin.get('KeyID')
             if keyid:
@@ -1780,33 +1607,12 @@ class OldWallet(NewWallet):
                 account = self.accounts[0]
                 addr = account.get_address(for_change, num)
                 txin['address'] = addr # fixme: side effect
-                pk = account.get_private_key(seed, (for_change, num))
-                pubkey = public_key_from_private_key(pk)
-                keypairs[pubkey] = pk
+                pk = account.get_private_key((for_change, num), self, password)
+                for sec in pk:
+                    pubkey = public_key_from_private_key(sec)
+                    keypairs[pubkey] = sec
 
 
-    def get_account_name(self, k):
-        assert k == 0
-        return 'Main account'
-
-    def is_seeded(self, account):
-        return self.seed is not None
-
-    def get_private_key(self, address, password):
-        if self.is_watching_only():
-            return []
-
-        # first check the provided password
-        seed = self.get_seed(password)
-        
-        out = []
-        if address in self.imported_keys.keys():
-            out.append( pw_decode( self.imported_keys[address], password ) )
-        else:
-            account_id, sequence = self.get_address_index(address)
-            pk = self.accounts[0].get_private_key(seed, sequence)
-            out.append(pk)
-        return out
 
     def check_pending_accounts(self):
         pass
@@ -1828,6 +1634,9 @@ class Wallet(object):
 
         if storage.get('wallet_type') == '2of3':
             return Wallet_2of3(storage)
+
+        if storage.get('wallet_type') == 'imported':
+            return Imported_Wallet(storage)
 
 
         if not storage.file_exists:
@@ -1877,7 +1686,24 @@ class Wallet(object):
                 return True
             except:
                 return False
-                
+
+    @classmethod
+    def is_address(self, text):
+        if not text:
+            return False
+        for x in text.split():
+            if not bitcoin.is_address(x):
+                return False
+        return True
+
+    @classmethod
+    def is_private_key(self, text):
+        if not text:
+            return False
+        for x in text.split():
+            if not bitcoin.is_private_key(x):
+                return False
+        return True
 
     @classmethod
     def from_seed(self, seed, storage):
@@ -1886,7 +1712,21 @@ class Wallet(object):
         elif is_new_seed(seed):
             klass = NewWallet
         w = klass(storage)
-        w.init_seed(seed)
+        return w
+
+    @classmethod
+    def from_address(self, text, storage):
+        w = Imported_Wallet(storage)
+        for x in text.split():
+            w.accounts[IMPORTED_ACCOUNT].add(x, None, None, None)
+        w.save_accounts()
+        return w
+
+    @classmethod
+    def from_private_key(self, text, storage):
+        w = Imported_Wallet(storage)
+        for x in text.split():
+            w.import_key(x, None)
         return w
 
     @classmethod

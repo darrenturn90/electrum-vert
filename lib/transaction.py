@@ -378,7 +378,7 @@ def get_address_from_output_script(bytes):
 
 class Transaction:
     
-    def __init__(self, raw, is_complete = True):
+    def __init__(self, raw):
         self.raw = raw
         self.deserialize()
         self.inputs = self.d['inputs']
@@ -386,7 +386,6 @@ class Transaction:
         self.outputs = map(lambda x: (x['address'],x['value']), self.outputs)
         self.locktime = self.d['lockTime']
 
-        
     def __str__(self):
         return self.raw
 
@@ -396,6 +395,31 @@ class Transaction:
         self = klass(raw)
         self.inputs = inputs
         self.outputs = outputs
+        return self
+
+    @classmethod 
+    def sweep(klass, privkeys, network, to_address, fee):
+        inputs = []
+        for privkey in privkeys:
+            pubkey = public_key_from_private_key(privkey)
+            address = address_from_private_key(privkey)
+            u = network.synchronous_get([ ('blockchain.address.listunspent',[address])])[0]
+            pay_script = klass.pay_script(address)
+            for item in u:
+                item['scriptPubKey'] = pay_script
+                item['redeemPubkey'] = pubkey
+                item['address'] = address
+                item['prevout_hash'] = item['tx_hash']
+                item['prevout_n'] = item['tx_pos']
+            inputs += u
+
+        if not inputs:
+            return
+
+        total = sum( map(lambda x:int(x.get('value')), inputs) ) - fee
+        outputs = [(to_address, total)]
+        self = klass.from_io(inputs, outputs)
+        self.sign({ pubkey:privkey })
         return self
 
     @classmethod
@@ -424,6 +448,25 @@ class Transaction:
         s += 'ae'
 
         return s
+
+
+    @classmethod
+    def pay_script(self, addr):
+        addrtype, hash_160 = bc_address_to_hash_160(addr)
+        if addrtype == 71:
+            script = '76a9'                                      # op_dup, op_hash_160
+            script += '14'                                       # push 0x14 bytes
+            script += hash_160.encode('hex')
+            script += '88ac'                                     # op_equalverify, op_checksig
+        elif addrtype == 5:
+            script = 'a9'                                        # op_hash_160
+            script += '14'                                       # push 0x14 bytes
+            script += hash_160.encode('hex')
+            script += '87'                                       # op_equal
+        else:
+            raise
+        return script
+
 
     @classmethod
     def serialize( klass, inputs, outputs, for_sig = None ):
@@ -475,20 +518,7 @@ class Transaction:
         for output in outputs:
             addr, amount = output
             s += int_to_hex( amount, 8)                              # amount
-            addrtype, hash_160 = bc_address_to_hash_160(addr)
-            if addrtype == 71:
-                script = '76a9'                                      # op_dup, op_hash_160
-                script += '14'                                       # push 0x14 bytes
-                script += hash_160.encode('hex')
-                script += '88ac'                                     # op_equalverify, op_checksig
-            elif addrtype == 5:
-                script = 'a9'                                        # op_hash_160
-                script += '14'                                       # push 0x14 bytes
-                script += hash_160.encode('hex')
-                script += '87'                                       # op_equal
-            else:
-                raise
-            
+            script = klass.pay_script(addr)
             s += var_int( len(script)/2 )                           #  script length
             s += script                                             #  script
         s += int_to_hex(0,4)                                        #  lock time
@@ -751,9 +781,8 @@ class Transaction:
     def add_input_info(self, input_info):
         for i, txin in enumerate(self.inputs):
             item = input_info[i]
-            txin['address'] = item['address']
-            txin['signatures'] = item['signatures']
             txin['scriptPubKey'] = item['scriptPubKey']
             txin['redeemScript'] = item.get('redeemScript')
             txin['redeemPubkey'] = item.get('redeemPubkey')
             txin['KeyID'] = item.get('KeyID')
+            txin['signatures'] = item.get('signatures',{})

@@ -64,7 +64,7 @@ register_command('createrawtransaction', 2, 2, False, True,  False, 'similar to 
 register_command('deseed',               0, 0, False, True,  False, 'Remove seed from wallet, creating a seedless, watching-only wallet.')
 register_command('decoderawtransaction', 1, 1, False, False, False, 'similar to vertcoind\'s command')
 register_command('dumpprivkey',          1, 1, False, True,  True,  'Dumps a specified private key for a given address', 'dumpprivkey <vertcoin address>')
-register_command('dumpprivkeys',         0, 0, False, True,  True,  'dump all private keys')
+register_command('dumpprivkeys',         0, 0, False, True,  True,  'dump all private keys in your wallet')
 register_command('freeze',               1, 1, False, True,  True,  'Freeze the funds at one of your wallet\'s addresses', 'freeze <address>')
 register_command('getbalance',           0, 1, True,  True,  False, 'Return the balance of your wallet, or of one account in your wallet', 'getbalance [<account>]')
 register_command('getservers',           0, 0, True,  False, False, 'Return the list of available servers')
@@ -102,6 +102,7 @@ register_command('verifymessage',        3,-1, False, False, False, 'Verifies a 
 register_command('daemon',               1, 1, True, False, False,  '<stop|status>')
 register_command('getproof',             1, 1, True, False, False, 'get merkle proof', 'getproof <address>')
 register_command('getutxoaddress',       2, 2, True, False, False, 'get the address of an unspent transaction output','getutxoaddress <txid> <pos>')
+register_command('sweep',                2, 3, True, False, False, 'Sweep a private key.', 'sweep privkey addr [fee]')
 
 
 
@@ -161,7 +162,9 @@ class Commands:
 
 
     def createrawtransaction(self, inputs, outputs):
-        inputs = map(lambda i: {'prevout_hash': i['txid'], 'prevout_n':i['vout']}, inputs )
+        for i in inputs:
+            i['prevout_hash'] = i['txid']
+            i['prevout_n'] = i['vout']
         outputs = map(lambda x: (x[0],int(1e8*x[1])), outputs.items())
         tx = Transaction.from_io(inputs, outputs)
         return tx
@@ -192,7 +195,7 @@ class Commands:
     def unfreeze(self,addr):
         return self.wallet.unfreeze(addr)
 
-    def dumpprivkey(self, addr):
+    def getprivatekeys(self, addr):
         return self.wallet.get_private_key(addr, self.password)
 
     def dumpprivkeys(self, addresses = None):
@@ -251,8 +254,7 @@ class Commands:
 
     def getseed(self):
         mnemonic = self.wallet.get_mnemonic(self.password)
-        seed = self.wallet.get_seed(self.password)
-        return { 'mnemonic':mnemonic, 'seed':seed, 'version':self.wallet.seed_version }
+        return { 'mnemonic':mnemonic, 'version':self.wallet.seed_version }
 
     def importprivkey(self, sec):
         try:
@@ -261,6 +263,11 @@ class Commands:
         except Exception as e:
             out = "Error: Keypair import failed: " + str(e)
         return out
+
+
+    def sweep(self, privkey, to_address, fee = 0.0001):
+        fee = int(Decimal(fee)*100000000)
+        return Transaction.sweep([privkey], self.network, to_address, fee)
 
 
     def signmessage(self, address, message):

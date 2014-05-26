@@ -99,47 +99,20 @@ class StatusBarButton(QPushButton):
 default_column_widths = { "history":[40,140,350,140], "contacts":[350,330], "receive": [370,200,130] }
 
 class ElectrumWindow(QMainWindow):
-    def build_menu(self):
-        m = QMenu()
-        m.addAction(_("Show/Hide"), self.show_or_hide)
-        m.addSeparator()
-        m.addAction(_("Exit Electrum"), self.close)
-        self.tray.setContextMenu(m)
 
-    def show_or_hide(self):
-        self.tray_activated(QSystemTrayIcon.DoubleClick)
 
-    def tray_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
-            if self.isMinimized() or self.isHidden():
-                self.show()
-                self.raise_()
-            else:
-                self.hide()
 
-    def __init__(self, config, network):
+    def __init__(self, config, network, gui_object):
         QMainWindow.__init__(self)
 
         self.config = config
         self.network = network
-
-        self._close_electrum = False
+        self.gui_object = gui_object
+        self.tray = gui_object.tray
+        self.go_lite = gui_object.go_lite
         self.lite = None
 
-        if sys.platform == 'darwin':
-          self.icon = QIcon(":icons/electrum_dark_icon.png")
-          #self.icon = QIcon(":icons/lock.png")
-        else:
-          self.icon = QIcon(':icons/electrum_light_icon.png')
-
-        self.tray = QSystemTrayIcon(self.icon, self)
-        self.tray.setToolTip('Electrum')
-        self.tray.activated.connect(self.tray_activated)
-
-        self.build_menu()
-        self.tray.show()
         self.create_status_bar()
-
         self.need_update = threading.Event()
 
         self.decimal_point = config.get('decimal_point', 8)
@@ -163,6 +136,8 @@ class ElectrumWindow(QMainWindow):
 
         g = self.config.get("winpos-qt",[100, 100, 840, 400])
         self.setGeometry(g[0], g[1], g[2], g[3])
+        if self.config.get("is_maximized"):
+            self.showMaximized()
 
         self.setWindowIcon(QIcon(":icons/electrum-vert.png"))
         self.init_menubar()
@@ -179,8 +154,8 @@ class ElectrumWindow(QMainWindow):
         self.connect(self, QtCore.SIGNAL('update_status'), self.update_status)
         self.connect(self, QtCore.SIGNAL('banner_signal'), lambda: self.console.showMessage(self.network.banner) )
         self.connect(self, QtCore.SIGNAL('transaction_signal'), lambda: self.notify_transactions() )
-        self.connect(self, QtCore.SIGNAL('send_tx2'), self.send_tx2)
-        self.connect(self, QtCore.SIGNAL('send_tx3'), self.send_tx3)
+        self.connect(self, QtCore.SIGNAL('payment_request_ok'), self.payment_request_ok)
+        self.connect(self, QtCore.SIGNAL('payment_request_error'), self.payment_request_error)
 
         self.history_list.setFocus(True)
 
@@ -269,7 +244,14 @@ class ElectrumWindow(QMainWindow):
         # Once GUI has been initialized check if we want to announce something since the callback has been called before the GUI was initialized
         self.notify_transactions()
         self.update_account_selector()
-        self.new_account.setEnabled(self.wallet.seed_version>4)
+        # update menus
+        self.new_account_menu.setEnabled(self.wallet.can_create_accounts())
+        self.private_keys_menu.setEnabled(not self.wallet.is_watching_only())
+        self.password_menu.setEnabled(not self.wallet.is_watching_only())
+        self.seed_menu.setEnabled(self.wallet.has_seed())
+        self.mpk_menu.setEnabled(self.wallet.is_deterministic())
+        self.import_menu.setEnabled(self.wallet.can_import())
+
         self.update_lock_icon()
         self.update_buttons_on_seed()
         self.update_console()
@@ -330,7 +312,7 @@ class ElectrumWindow(QMainWindow):
             return
 
         wizard = installwizard.InstallWizard(self.config, self.network, storage)
-        wallet = wizard.run()
+        wallet = wizard.run('new')
         if wallet:
             self.load_wallet(wallet)
 
@@ -347,24 +329,24 @@ class ElectrumWindow(QMainWindow):
 
         wallet_menu = menubar.addMenu(_("&Wallet"))
         wallet_menu.addAction(_("&New contact"), self.new_contact_dialog)
-        self.new_account = wallet_menu.addAction(_("&New account"), self.new_account_dialog)
+        self.new_account_menu = wallet_menu.addAction(_("&New account"), self.new_account_dialog)
 
         wallet_menu.addSeparator()
 
-        wallet_menu.addAction(_("&Password"), self.change_password_dialog)
-        wallet_menu.addAction(_("&Seed"), self.show_seed_dialog)
-        wallet_menu.addAction(_("&Master Public Key"), self.show_master_public_key)
+        self.password_menu = wallet_menu.addAction(_("&Password"), self.change_password_dialog)
+        self.seed_menu = wallet_menu.addAction(_("&Seed"), self.show_seed_dialog)
+        self.mpk_menu = wallet_menu.addAction(_("&Master Public Keys"), self.show_master_public_keys)
 
         wallet_menu.addSeparator()
         labels_menu = wallet_menu.addMenu(_("&Labels"))
         labels_menu.addAction(_("&Import"), self.do_import_labels)
         labels_menu.addAction(_("&Export"), self.do_export_labels)
 
-        keys_menu = wallet_menu.addMenu(_("&Private keys"))
-        keys_menu.addAction(_("&Import"), self.do_import_privkey)
-        keys_menu.addAction(_("&Export"), self.do_export_privkeys)
-
-        wallet_menu.addAction(_("&Export History"), self.do_export_history)
+        self.private_keys_menu = wallet_menu.addMenu(_("&Private keys"))
+        self.private_keys_menu.addAction(_("&Sweep"), self.sweep_key_dialog)
+        self.import_menu = self.private_keys_menu.addAction(_("&Import"), self.do_import_privkey)
+        self.private_keys_menu.addAction(_("&Export"), self.export_privkeys_dialog)
+        wallet_menu.addAction(_("&Export History"), self.export_history_dialog)
 
         tools_menu = menubar.addMenu(_("&Tools"))
 
@@ -396,12 +378,12 @@ class ElectrumWindow(QMainWindow):
         self.setMenuBar(menubar)
 
     def show_about(self):
-        QMessageBox.about(self, "Electrum",
+        QMessageBox.about(self, "Electrum-Vert",
             _("Version")+" %s" % (self.wallet.electrum_version) + "\n\n" + _("Electrum's focus is speed, with low resource usage and simplifying Vertcoin. You do not need to perform regular backups, because your wallet can be recovered from a secret phrase that you can memorize or write on paper. Startup times are instant because it operates in conjunction with high-performance servers that handle the most complicated parts of the Vertcoin system."))
 
     def show_report_bug(self):
-        QMessageBox.information(self, "Electrum - " + _("Reporting Bugs"),
-            _("Please report any bugs as issues on github:")+" <a href=\"https://github.com/spesmilo/electrum/issues\">https://github.com/spesmilo/electrum/issues</a>")
+        QMessageBox.information(self, "Electrum-Vert - " + _("Reporting Bugs"),
+            _("Please report any bugs as issues on github:")+" <a href=\"https://github.com/paybee/electrum-vert/issues\">https://github.com/paybee/electrum-vert/issues</a>")
 
 
     def notify_transactions(self):
@@ -432,20 +414,20 @@ class ElectrumWindow(QMainWindow):
                           self.notify(_("New transaction received. %(amount)s %(unit)s") % { 'amount' : self.format_amount(v), 'unit' : self.base_unit()})
 
     def notify(self, message):
-        self.tray.showMessage("Electrum", message, QSystemTrayIcon.Information, 20000)
+        self.tray.showMessage("Electrum-Vert", message, QSystemTrayIcon.Information, 20000)
 
 
 
     # custom wrappers for getOpenFileName and getSaveFileName, that remember the path selected by the user
     def getOpenFileName(self, title, filter = ""):
-        directory = self.config.get('io_dir', os.path.expanduser('~'))
+        directory = self.config.get('io_dir', unicode(os.path.expanduser('~')))
         fileName = unicode( QFileDialog.getOpenFileName(self, title, directory, filter) )
         if fileName and directory != os.path.dirname(fileName):
             self.config.set_key('io_dir', os.path.dirname(fileName), True)
         return fileName
 
     def getSaveFileName(self, title, filename, filter = ""):
-        directory = self.config.get('io_dir', os.path.expanduser('~'))
+        directory = self.config.get('io_dir', unicode(os.path.expanduser('~')))
         path = os.path.join( directory, filename )
         fileName = unicode( QFileDialog.getSaveFileName(self, title, path, filter) )
         if fileName and directory != os.path.dirname(fileName):
@@ -538,6 +520,11 @@ class ElectrumWindow(QMainWindow):
     def create_history_menu(self, position):
         self.history_list.selectedIndexes()
         item = self.history_list.currentItem()
+        be = self.config.get('block_explorer', 'vertexplorer.com')
+        if be == 'vertexplorer.com':
+            block_explorer = 'http://vertexplorer.com/tx/'
+        elif be == 'explorer.vertcoin.org':
+            block_explorer = 'http://explorer.vertcoin.org/tx/'
         if not item: return
         tx_hash = str(item.data(0, Qt.UserRole).toString())
         if not tx_hash: return
@@ -545,8 +532,7 @@ class ElectrumWindow(QMainWindow):
         menu.addAction(_("Copy ID to Clipboard"), lambda: self.app.clipboard().setText(tx_hash))
         menu.addAction(_("Details"), lambda: self.show_transaction(self.wallet.transactions.get(tx_hash)))
         menu.addAction(_("Edit description"), lambda: self.tx_label_clicked(item,2))
-        menu.addAction(_("View on VertExplorer"), lambda: webbrowser.open("http://vertexplorer.com/tx/" + tx_hash))
-        menu.addAction(_("View on explorer.vertcoin.org"), lambda: webbrowser.open("https://explorer.vertcoin.org/tx/" + tx_hash))
+        menu.addAction(_("View on block explorer"), lambda: webbrowser.open(block_explorer + tx_hash))
         menu.exec_(self.contacts_list.viewport().mapToGlobal(position))
 
 
@@ -690,10 +676,10 @@ class ElectrumWindow(QMainWindow):
 
 
         self.payto_e = QLineEdit()
+        self.payto_help = HelpButton(_('Recipient of the funds.') + '\n\n' + _('You may enter a Vertcoin address, a label from your list of contacts (a list of completions will be proposed), or an alias (email-like address that forwards to a Vertcoin address)'))
         grid.addWidget(QLabel(_('Pay to')), 1, 0)
         grid.addWidget(self.payto_e, 1, 1, 1, 3)
-
-        grid.addWidget(HelpButton(_('Recipient of the funds.') + '\n\n' + _('You may enter a Vertcoin address, a label from your list of contacts (a list of completions will be proposed), or an alias (email-like address that forwards to a Vertcoin address)')), 1, 4)
+        grid.addWidget(self.payto_help, 1, 4)
 
         completer = QCompleter()
         completer.setCaseSensitivity(False)
@@ -701,9 +687,10 @@ class ElectrumWindow(QMainWindow):
         completer.setModel(self.completions)
 
         self.message_e = QLineEdit()
+        self.message_help = HelpButton(_('Description of the transaction (not mandatory).') + '\n\n' + _('The description is not sent to the recipient of the funds. It is stored in your wallet file, and displayed in the \'History\' tab.'))
         grid.addWidget(QLabel(_('Description')), 2, 0)
         grid.addWidget(self.message_e, 2, 1, 1, 3)
-        grid.addWidget(HelpButton(_('Description of the transaction (not mandatory).') + '\n\n' + _('The description is not sent to the recipient of the funds. It is stored in your wallet file, and displayed in the \'History\' tab.')), 2, 4)
+        grid.addWidget(self.message_help, 2, 4)
 
         self.from_label = QLabel(_('From'))
         grid.addWidget(self.from_label, 3, 0)
@@ -717,12 +704,12 @@ class ElectrumWindow(QMainWindow):
         self.set_pay_from([])
 
         self.amount_e = AmountEdit(self.base_unit)
+        self.amount_help = HelpButton(_('Amount to be sent.') + '\n\n' \
+                                      + _('The amount will be displayed in red if you do not have enough funds in your wallet. Note that if you have frozen some of your addresses, the available funds will be lower than your total balance.') \
+                                      + '\n\n' + _('Keyboard shortcut: type "!" to send all your coins.'))
         grid.addWidget(QLabel(_('Amount')), 4, 0)
         grid.addWidget(self.amount_e, 4, 1, 1, 2)
-        grid.addWidget(HelpButton(
-                _('Amount to be sent.') + '\n\n' \
-                    + _('The amount will be displayed in red if you do not have enough funds in your wallet. Note that if you have frozen some of your addresses, the available funds will be lower than your total balance.') \
-                    + '\n\n' + _('Keyboard shortcut: type "!" to send all your coins.')), 4, 3)
+        grid.addWidget(self.amount_help, 4, 3)
 
         self.fee_e = AmountEdit(self.base_unit)
         grid.addWidget(QLabel(_('Fee')), 5, 0)
@@ -826,24 +813,31 @@ class ElectrumWindow(QMainWindow):
 
 
     def do_send(self):
-
         label = unicode( self.message_e.text() )
-        r = unicode( self.payto_e.text() )
-        r = r.strip()
 
-        # label or alias, with address in brackets
-        m = re.match('(.*?)\s*\<([1-9A-HJ-NP-Za-km-z]{26,})\>', r)
-        to_address = m.group(2) if m else r
+        if self.gui_object.payment_request:
+            outputs = self.gui_object.payment_request.outputs
+            amount = self.gui_object.payment_request.get_amount()
 
-        if not is_valid(to_address):
-            QMessageBox.warning(self, _('Error'), _('Invalid Vertcoin Address') + ':\n' + to_address, _('OK'))
-            return
+        else:
+            r = unicode( self.payto_e.text() )
+            r = r.strip()
 
-        try:
-            amount = self.read_amount(unicode( self.amount_e.text()))
-        except Exception:
-            QMessageBox.warning(self, _('Error'), _('Invalid Amount'), _('OK'))
-            return
+            # label or alias, with address in brackets
+            m = re.match('(.*?)\s*\<([1-9A-HJ-NP-Za-km-z]{26,})\>', r)
+            to_address = m.group(2) if m else r
+            if not is_valid(to_address):
+                QMessageBox.warning(self, _('Error'), _('Invalid Vertcoin Address') + ':\n' + to_address, _('OK'))
+                return
+
+            try:
+                amount = self.read_amount(unicode( self.amount_e.text()))
+            except Exception:
+                QMessageBox.warning(self, _('Error'), _('Invalid Amount'), _('OK'))
+                return
+
+            outputs = [(to_address, amount)]
+
         try:
             fee = self.read_amount(unicode( self.fee_e.text()))
         except Exception:
@@ -860,25 +854,15 @@ class ElectrumWindow(QMainWindow):
             if not self.question(_("The fee for this transaction seems unusually high.\nAre you really sure you want to pay %(fee)s in fees?")%{ 'fee' : self.format_amount(fee) + ' '+ self.base_unit()}):
                 return
 
-        self.send_tx(to_address, amount, fee, label)
+        self.send_tx(outputs, fee, label)
 
-
-    def waiting_dialog(self, message):
-        d = QDialog(self)
-        d.setWindowTitle('Please wait')
-        l = QLabel(message)
-        vbox = QVBoxLayout(d)
-        vbox.addWidget(l)
-        d.show()
-        return d
 
 
     @protected
-    def send_tx(self, to_address, amount, fee, label, password):
+    def send_tx(self, outputs, fee, label, password):
 
         # first, create an unsigned tx 
         domain = self.get_payment_sources()
-        outputs = [(to_address, amount)]
         try:
             tx = self.wallet.make_unsigned_transaction(outputs, fee, None, domain)
             tx.error = None
@@ -896,82 +880,81 @@ class ElectrumWindow(QMainWindow):
             keypairs = {}
             self.wallet.add_keypairs_from_wallet(tx, keypairs, password)
             self.wallet.sign_transaction(tx, keypairs, password)
-            self.signed_tx_data = (tx, fee, label)
-            self.emit(SIGNAL('send_tx2'))
-        self.tx_wait_dialog = self.waiting_dialog('Signing..')
-        threading.Thread(target=sign_thread).start()
+            return tx, fee, label
 
-        # add recipient to addressbook
-        if to_address not in self.wallet.addressbook and not self.wallet.is_mine(to_address):
-            self.wallet.addressbook.append(to_address)
+        def sign_done(tx, fee, label):
+            if tx.error:
+                self.show_message(tx.error)
+                return
+            if fee < tx.required_fee(self.wallet.verifier):
+                QMessageBox.warning(self, _('Error'), _("This transaction requires a higher fee, or it will not be propagated by the network."), _('OK'))
+                return
+            if label:
+                self.wallet.set_label(tx.hash(), label)
+
+            if not self.gui_object.payment_request:
+                if not tx.is_complete() or self.config.get('show_before_broadcast'):
+                    self.show_transaction(tx)
+                    return
+
+            self.broadcast_transaction(tx)
+
+        self.waiting_dialog = WaitingDialog(self, 'Signing..', sign_thread, sign_done)
+        self.waiting_dialog.start()
 
 
-    def send_tx2(self):
-        tx, fee, label = self.signed_tx_data
-        self.tx_wait_dialog.accept()
-        
-        if tx.error:
-            self.show_message(tx.error)
-            return
 
-        if fee < tx.required_fee(self.wallet.verifier):
-            QMessageBox.warning(self, _('Error'), _("This transaction requires a higher fee, or it will not be propagated by the network."), _('OK'))
-            return
+    def broadcast_transaction(self, tx):
 
-        if label:
-            self.wallet.set_label(tx.hash(), label)
-
-        if not tx.is_complete():
-            self.show_transaction(tx)
-            return
-
-        # broadcast the tx
         def broadcast_thread():
-            self.tx_broadcast_result =  self.wallet.sendtx(tx)
-            self.emit(SIGNAL('send_tx3'))
-        self.tx_broadcast_dialog = self.waiting_dialog('Broadcasting..')
-        threading.Thread(target=broadcast_thread).start()
+            if self.gui_object.payment_request:
+                refund_address = self.wallet.addresses()[0]
+                status, msg = self.gui_object.payment_request.send_ack(str(tx), refund_address)
+                self.gui_object.payment_request = None
+            else:
+                status, msg =  self.wallet.sendtx(tx)
+            return status, msg
+
+        def broadcast_done(status, msg):
+            if status:
+                QMessageBox.information(self, '', _('Payment sent.') + '\n' + msg, _('OK'))
+                self.do_clear()
+            else:
+                QMessageBox.warning(self, _('Error'), msg, _('OK'))
+
+        self.waiting_dialog = WaitingDialog(self, 'Broadcasting..', broadcast_thread, broadcast_done)
+        self.waiting_dialog.start()
 
 
-    def send_tx3(self):
-        self.tx_broadcast_dialog.accept()
-        status, msg = self.tx_broadcast_result
-        if status:
-            QMessageBox.information(self, '', _('Payment sent.') + '\n' + msg, _('OK'))
-            self.do_clear()
-            self.update_contacts_tab()
-        else:
-            QMessageBox.warning(self, _('Error'), msg, _('OK'))
+
+    def prepare_for_payment_request(self):
+        style = "QWidget { background-color:none;border:none;}"
+        self.tabs.setCurrentIndex(1)
+        for e in [self.payto_e, self.amount_e, self.message_e]:
+            e.setReadOnly(True)
+            e.setStyleSheet(style)
+        for h in [self.payto_help, self.amount_help, self.message_help]:
+            h.hide()
+        self.payto_e.setText(_("please wait..."))
+        return True
+
+    def payment_request_ok(self):
+        self.payto_e.setText(self.gui_object.payment_request.domain)
+        self.amount_e.setText(self.format_amount(self.gui_object.payment_request.get_amount()))
+        self.message_e.setText(self.gui_object.payment_request.memo)
+
+    def payment_request_error(self):
+        self.do_clear()
+        self.show_message(self.gui_object.payment_request.error)
 
 
-
-
-
-
-    def set_url(self, url):
-        try:
-            address, amount, label, message, signature, identity, url = util.parse_url(url)
-        except Exception:
-            QMessageBox.warning(self, _('Error'), _('Invalid Vertcoin URL'), _('OK'))
-            return
-
-        try:
-            if amount and self.base_unit() == 'mVTC': amount = str( Decimal(amount) * 1000)
-            elif amount: amount = str(Decimal(amount))
-        except Exception:
-            amount = "0.0"
-            QMessageBox.warning(self, _('Error'), _('Invalid Amount'), _('OK'))
-
-        if self.mini:
-            self.mini.set_payment_fields(address, amount)
+    def set_send(self, address, amount, label, message):
 
         if label and self.wallet.labels.get(address) != label:
             if self.question('Give label "%s" to address %s ?'%(label,address)):
                 if address not in self.wallet.addressbook and not self.wallet.is_mine(address):
                     self.wallet.addressbook.append(address)
                 self.wallet.set_label(address, label)
-
-        run_hook('set_url', url, self.show_message, self.question)
 
         self.tabs.setCurrentIndex(1)
         label = self.wallet.labels.get(address)
@@ -982,19 +965,15 @@ class ElectrumWindow(QMainWindow):
         if amount:
             self.amount_e.setText(amount)
 
-        if identity:
-            self.set_frozen(self.payto_e,True)
-            self.set_frozen(self.amount_e,True)
-            self.set_frozen(self.message_e,True)
-            self.payto_sig.setText( '      '+_('The Vertcoin URI was signed by')+' ' + identity )
-        else:
-            self.payto_sig.setVisible(False)
 
     def do_clear(self):
         self.payto_sig.setVisible(False)
         for e in [self.payto_e, self.message_e, self.amount_e, self.fee_e]:
             e.setText('')
             self.set_frozen(e,False)
+            e.setStyleSheet("")
+        for h in [self.payto_help, self.amount_help, self.message_help]:
+            h.show()
 
         self.set_pay_from([])
         self.update_status()
@@ -1157,11 +1136,11 @@ class ElectrumWindow(QMainWindow):
             menu.addAction(_("QR code"), lambda: self.show_qrcode("vertcoin:" + addr, _("Address")) )
             menu.addAction(_("Edit label"), lambda: self.edit_label(True))
             menu.addAction(_("Public keys"), lambda: self.show_public_keys(addr))
-            if self.wallet.seed:
+            if not self.wallet.is_watching_only():
                 menu.addAction(_("Private key"), lambda: self.show_private_key(addr))
                 menu.addAction(_("Sign/verify message"), lambda: self.sign_verify_message(addr))
                 #menu.addAction(_("Encrypt/decrypt message"), lambda: self.encrypt_message(addr))
-            if addr in self.wallet.imported_keys:
+            if self.wallet.is_imported(addr):
                 menu.addAction(_("Remove from wallet"), lambda: self.delete_imported_key(addr))
 
         if any(addr not in self.wallet.frozen_addresses for addr in addrs):
@@ -1252,90 +1231,72 @@ class ElectrumWindow(QMainWindow):
 
     def update_receive_tab(self):
         l = self.receive_list
+        # extend the syntax for consistency
+        l.addChild = l.addTopLevelItem
+        l.insertChild = l.insertTopLevelItem
 
         l.clear()
-        l.setColumnHidden(2, False)
-        l.setColumnHidden(3, False)
         for i,width in enumerate(self.column_widths['receive']):
             l.setColumnWidth(i, width)
 
+        accounts = self.wallet.get_accounts()
         if self.current_account is None:
-            account_items = self.wallet.accounts.items()
-        elif self.current_account != -1:
-            account_items = [(self.current_account, self.wallet.accounts.get(self.current_account))]
+            account_items = sorted(accounts.items())
         else:
-            account_items = []
+            account_items = [(self.current_account, accounts.get(self.current_account))]
+
 
         for k, account in account_items:
-            name = self.wallet.get_account_name(k)
-            c,u = self.wallet.get_account_balance(k)
-            account_item = QTreeWidgetItem( [ name, '', self.format_amount(c+u), ''] )
-            l.addTopLevelItem(account_item)
-            account_item.setExpanded(self.accounts_expanded.get(k, True))
-            account_item.setData(0, 32, k)
 
-            if not self.wallet.is_seeded(k):
-                icon = QIcon(":icons/key.png")
-                account_item.setIcon(0, icon)
+            if len(accounts) > 1:
+                name = self.wallet.get_account_name(k)
+                c,u = self.wallet.get_account_balance(k)
+                account_item = QTreeWidgetItem( [ name, '', self.format_amount(c+u), ''] )
+                l.addTopLevelItem(account_item)
+                account_item.setExpanded(self.accounts_expanded.get(k, True))
+                account_item.setData(0, 32, k)
+            else:
+                account_item = l
 
-            for is_change in ([0,1]):
-                name = _("Receiving") if not is_change else _("Change")
-                seq_item = QTreeWidgetItem( [ name, '', '', '', ''] )
-                account_item.addChild(seq_item)
+            sequences = [0,1] if account.has_change() else [0]
+            for is_change in sequences:
+                if len(sequences) > 1:
+                    name = _("Receiving") if not is_change else _("Change")
+                    seq_item = QTreeWidgetItem( [ name, '', '', '', ''] )
+                    account_item.addChild(seq_item)
+                    if not is_change: 
+                        seq_item.setExpanded(True)
+                else:
+                    seq_item = account_item
+                    
                 used_item = QTreeWidgetItem( [ _("Used"), '', '', '', ''] )
                 used_flag = False
-                if not is_change: seq_item.setExpanded(True)
 
                 is_red = False
                 gap = 0
 
                 for address in account.get_addresses(is_change):
-                    h = self.wallet.history.get(address,[])
 
-                    if h == []:
+                    num, is_used = self.wallet.is_used(address)
+                    if num == 0:
                         gap += 1
                         if gap > self.wallet.gap_limit:
                             is_red = True
                     else:
                         gap = 0
 
-                    c, u = self.wallet.get_addr_balance(address)
-                    num_tx = '*' if h == ['*'] else "%d"%len(h)
-                    item = QTreeWidgetItem( [ address, '', '', num_tx] )
+                    item = QTreeWidgetItem( [ address, '', '', "%d"%num] )
                     self.update_receive_item(item)
                     if is_red:
                         item.setBackgroundColor(1, QColor('red'))
-                    if len(h) > 0 and c == -u:
+
+                    if is_used:
                         if not used_flag:
                             seq_item.insertChild(0,used_item)
                             used_flag = True
                         used_item.addChild(item)
                     else:
                         seq_item.addChild(item)
-
-
-        for k, addr in self.wallet.get_pending_accounts():
-            name = self.wallet.labels.get(k,'')
-            account_item = QTreeWidgetItem( [ name + "  [ "+_('pending account')+" ]", '', '', ''] )
-            self.update_receive_item(item)
-            l.addTopLevelItem(account_item)
-            account_item.setExpanded(True)
-            account_item.setData(0, 32, k)
-            item = QTreeWidgetItem( [ addr, '', '', '', ''] )
-            account_item.addChild(item)
-            self.update_receive_item(item)
-
-
-        if self.wallet.imported_keys and (self.current_account is None or self.current_account == -1):
-            c,u = self.wallet.get_imported_balance()
-            account_item = QTreeWidgetItem( [ _('Imported'), '', self.format_amount(c+u), ''] )
-            l.addTopLevelItem(account_item)
-            account_item.setExpanded(True)
-            for address in self.wallet.imported_keys.keys():
-                item = QTreeWidgetItem( [ address, '', '', ''] )
-                self.update_receive_item(item)
-                account_item.addChild(item)
-
 
         # we use column 1 because column 0 may be hidden
         l.setCurrentItem(l.topLevelItem(0),1)
@@ -1439,13 +1400,16 @@ class ElectrumWindow(QMainWindow):
 
 
     def update_buttons_on_seed(self):
-        if not self.wallet.is_watching_only():
+        if self.wallet.has_seed():
            self.seed_button.show()
+        else:
+           self.seed_button.hide()
+
+        if not self.wallet.is_watching_only():
            self.password_button.show()
            self.send_button.setText(_("Send"))
         else:
            self.password_button.hide()
-           self.seed_button.hide()
            self.send_button.setText(_("Create unsigned transaction"))
 
 
@@ -1519,76 +1483,30 @@ class ElectrumWindow(QMainWindow):
         name = str(e.text())
         if not name: return
 
-        self.wallet.create_pending_account('1of1', name, password)
+        self.wallet.create_pending_account(name, password)
         self.update_receive_tab()
         self.tabs.setCurrentIndex(2)
 
 
 
-    def show_master_public_key_old(self):
-        dialog = QDialog(self)
-        dialog.setModal(1)
-        dialog.setWindowTitle(_("Master Public Key"))
 
-        main_text = QTextEdit()
-        main_text.setText(self.wallet.get_master_public_key())
-        main_text.setReadOnly(True)
-        main_text.setMaximumHeight(170)
-        qrw = QRCodeWidget(self.wallet.get_master_public_key())
-
-        ok_button = QPushButton(_("OK"))
-        ok_button.setDefault(True)
-        ok_button.clicked.connect(dialog.accept)
-
-        main_layout = QGridLayout()
-        main_layout.addWidget(QLabel(_('Your Master Public Key is:')), 0, 0, 1, 2)
-
-        main_layout.addWidget(main_text, 1, 0)
-        main_layout.addWidget(qrw, 1, 1 )
-
-        vbox = QVBoxLayout()
-        vbox.addLayout(main_layout)
-        vbox.addLayout(close_button(dialog))
-        dialog.setLayout(vbox)
-        dialog.exec_()
-
-
-    def show_master_public_key(self):
-
-        if self.wallet.seed_version == 4:
-            self.show_master_public_key_old()
-            return
+    def show_master_public_keys(self):
 
         dialog = QDialog(self)
         dialog.setModal(1)
         dialog.setWindowTitle(_("Master Public Keys"))
 
-        mpk_text = QTextEdit()
-        mpk_text.setReadOnly(True)
-        mpk_text.setMaximumHeight(170)
-        mpk_qrw = QRCodeWidget()
-
         main_layout = QGridLayout()
-
-        main_layout.addWidget(QLabel(_('Key')), 1, 0)
-        main_layout.addWidget(mpk_text, 1, 1)
-        main_layout.addWidget(mpk_qrw, 1, 2)
-
-        def update(key):
-            xpub = self.wallet.master_public_keys[str(key)]
-            mpk_text.setText(xpub)
-            mpk_qrw.set_addr(xpub)
-            mpk_qrw.update_qr()
-
-        key_selector = QComboBox()
-        keys = sorted(self.wallet.master_public_keys.keys())
-        key_selector.addItems(keys)
-
-        main_layout.addWidget(QLabel(_('Derivation:')), 0, 0)
-        main_layout.addWidget(key_selector, 0, 1)
-        dialog.connect(key_selector,SIGNAL("activated(QString)"),update)
-
-        update(keys[0])
+        mpk_dict = self.wallet.get_master_public_keys()
+        i = 0
+        for key, value in mpk_dict.items():
+            main_layout.addWidget(QLabel(key), i, 0)
+            mpk_text = QTextEdit()
+            mpk_text.setReadOnly(True)
+            mpk_text.setMaximumHeight(170)
+            mpk_text.setText(value)
+            main_layout.addWidget(mpk_text, i + 1, 0)
+            i += 2
 
         vbox = QVBoxLayout()
         vbox.addLayout(main_layout)
@@ -1600,29 +1518,18 @@ class ElectrumWindow(QMainWindow):
 
     @protected
     def show_seed_dialog(self, password):
-        if self.wallet.is_watching_only():
-            QMessageBox.information(self, _('Message'), _('This is a watching-only wallet'), _('OK'))
+        if not self.wallet.has_seed():
+            QMessageBox.information(self, _('Message'), _('This wallet has no seed'), _('OK'))
             return
 
-        if self.wallet.seed:
-            try:
-                mnemonic = self.wallet.get_mnemonic(password)
-            except Exception:
-                QMessageBox.warning(self, _('Error'), _('Incorrect Password'), _('OK'))
-                return
-            from seed_dialog import SeedDialog
-            d = SeedDialog(self, mnemonic, self.wallet.imported_keys)
-            d.exec_()
-        else:
-            l = {}
-            for k in self.wallet.master_private_keys.keys():
-                pk = self.wallet.get_master_private_key(k, password)
-                l[k] = pk
-            from seed_dialog import PrivateKeysDialog
-            d = PrivateKeysDialog(self,l)
-            d.exec_()
-
-
+        try:
+            mnemonic = self.wallet.get_mnemonic(password)
+        except Exception:
+            QMessageBox.warning(self, _('Error'), _('Incorrect Password'), _('OK'))
+            return
+        from seed_dialog import SeedDialog
+        d = SeedDialog(self, mnemonic, self.wallet.imported_keys)
+        d.exec_()
 
 
 
@@ -1904,14 +1811,13 @@ class ElectrumWindow(QMainWindow):
         try:
             tx_dict = json.loads(str(txt))
             assert "hex" in tx_dict.keys()
-            assert "complete" in tx_dict.keys()
-            tx = Transaction(tx_dict["hex"], tx_dict["complete"])
-            if not tx_dict["complete"]:
-                assert "input_info" in tx_dict.keys()
+            tx = Transaction(tx_dict["hex"])
+            if tx_dict.has_key("input_info"):
                 input_info = json.loads(tx_dict['input_info'])
                 tx.add_input_info(input_info)
             return tx
         except Exception:
+            traceback.print_exc(file=sys.stdout)
             pass
 
         QMessageBox.critical(None, _("Unable to parse transaction"), _("Electrum was unable to parse your transaction"))
@@ -2014,36 +1920,86 @@ class ElectrumWindow(QMainWindow):
 
 
     @protected
-    def do_export_privkeys(self, password):
-        if not self.wallet.seed:
-            self.show_message(_("This wallet has no seed"))
+    def export_privkeys_dialog(self, password):
+        if self.wallet.is_watching_only():
+            self.show_message(_("This is a watching-only wallet"))
             return
 
-        self.show_message("%s\n%s\n%s" % (_("WARNING: ALL your private keys are secret."),  _("Exposing a single private key can compromise your entire wallet!"), _("In particular, DO NOT use 'redeem private key' services proposed by third parties.")))
+        d = QDialog(self)
+        d.setWindowTitle(_('Private keys'))
+        d.setMinimumSize(850, 300)
+        vbox = QVBoxLayout(d)
+
+        msg = "%s\n%s\n%s" % (_("WARNING: ALL your private keys are secret."), 
+                              _("Exposing a single private key can compromise your entire wallet!"), 
+                              _("In particular, DO NOT use 'redeem private key' services proposed by third parties."))
+        vbox.addWidget(QLabel(msg))
+
+        e = QTextEdit()
+        e.setReadOnly(True)
+        vbox.addWidget(e)
+
+        defaultname = 'electrum-vert-private-keys.csv'
+        select_msg = _('Select file to export your private keys to')
+        hbox, filename_e, csv_button = filename_field(self, self.config, defaultname, select_msg)
+        vbox.addLayout(hbox)
+
+        h, b = ok_cancel_buttons2(d, _('Export'))
+        b.setEnabled(False)
+        vbox.addLayout(h)
+
+        private_keys = {}
+        addresses = self.wallet.addresses(True)
+        done = False
+        def privkeys_thread():
+            for addr in addresses:
+                time.sleep(0.1)
+                if done: 
+                    break
+                private_keys[addr] = "\n".join(self.wallet.get_private_key(addr, password))
+                d.emit(SIGNAL('computing_privkeys'))
+            d.emit(SIGNAL('show_privkeys'))
+
+        def show_privkeys():
+            s = "\n".join( map( lambda x: x[0] + "\t"+ x[1], private_keys.items()))
+            e.setText(s)
+            b.setEnabled(True)
+
+        d.connect(d, QtCore.SIGNAL('computing_privkeys'), lambda: e.setText("Please wait... %d/%d"%(len(private_keys),len(addresses))))
+        d.connect(d, QtCore.SIGNAL('show_privkeys'), show_privkeys)
+        threading.Thread(target=privkeys_thread).start()
+
+        if not d.exec_():
+            done = True
+            return
+
+        filename = filename_e.text()
+        if not filename:
+            return
 
         try:
-            select_export = _('Select file to export your private keys to')
-            fileName = self.getSaveFileName(select_export, 'electrum-private-keys.csv', "*.csv")
-            if fileName:
-                with open(fileName, "w+") as csvfile:
-                    transaction = csv.writer(csvfile)
-                    transaction.writerow(["address", "private_key"])
-
-                    addresses = self.wallet.addresses(True)
-
-                    for addr in addresses:
-                        pk = "".join(self.wallet.get_private_key(addr, password))
-                        transaction.writerow(["%34s"%addr,pk])
-
-                    self.show_message(_("Private keys exported."))
-
+            self.do_export_privkeys(filename, private_keys, csv_button.isChecked())
         except (IOError, os.error), reason:
             export_error_label = _("Electrum was unable to produce a private key-export.")
             QMessageBox.critical(None, _("Unable to create csv"), export_error_label + "\n" + str(reason))
 
         except Exception as e:
-          self.show_message(str(e))
-          return
+            self.show_message(str(e))
+            return
+
+        self.show_message(_("Private keys exported."))
+
+
+    def do_export_privkeys(self, fileName, pklist, is_csv):
+        with open(fileName, "w+") as f:
+            if is_csv:
+                transaction = csv.writer(f)
+                transaction.writerow(["address", "private_key"])
+                for addr, pk in pklist.items():
+                    transaction.writerow(["%34s"%addr,pk])
+            else:
+                import json
+                f.write(json.dumps(pklist, indent = 4))
 
 
     def do_import_labels(self):
@@ -2063,7 +2019,7 @@ class ElectrumWindow(QMainWindow):
     def do_export_labels(self):
         labels = self.wallet.labels
         try:
-            fileName = self.getSaveFileName(_("Select file to save your labels"), 'electrum_labels.dat', "*.dat")
+            fileName = self.getSaveFileName(_("Select file to save your labels"), 'electrum-vert_labels.dat', "*.dat")
             if fileName:
                 with open(fileName, 'w+') as f:
                     json.dump(labels, f)
@@ -2072,55 +2028,129 @@ class ElectrumWindow(QMainWindow):
             QMessageBox.critical(None, _("Unable to export labels"), _("Electrum was unable to export your labels.")+"\n" + str(reason))
 
 
-    def do_export_history(self):
-        wallet = self.wallet
-        select_export = _('Select file to export your wallet transactions to')
-        fileName = QFileDialog.getSaveFileName(QWidget(), select_export, os.path.expanduser('~/electrum-ltc-history.csv'), "*.csv")
-        if not fileName:
+    def export_history_dialog(self):
+
+        d = QDialog(self)
+        d.setWindowTitle(_('Export History'))
+        d.setMinimumSize(400, 200)
+        vbox = QVBoxLayout(d)
+
+        defaultname = os.path.expanduser('~/electrum-vert-history.csv')
+        select_msg = _('Select file to export your wallet transactions to')
+
+        hbox, filename_e, csv_button = filename_field(self, self.config, defaultname, select_msg)
+        vbox.addLayout(hbox)
+
+        vbox.addStretch(1)
+
+        h, b = ok_cancel_buttons2(d, _('Export'))
+        vbox.addLayout(h)
+        if not d.exec_():
+            return
+
+        filename = filename_e.text()
+        if not filename:
             return
 
         try:
-            with open(fileName, "w+") as csvfile:
-                transaction = csv.writer(csvfile)
-                transaction.writerow(["transaction_hash","label", "confirmations", "value", "fee", "balance", "timestamp"])
-                for item in wallet.get_tx_history():
-                    tx_hash, confirmations, is_mine, value, fee, balance, timestamp = item
-                    if confirmations:
-                        if timestamp is not None:
-                            try:
-                                time_string = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
-                            except [RuntimeError, TypeError, NameError] as reason:
-                                time_string = "unknown"
-                                pass
-                        else:
-                          time_string = "unknown"
-                    else:
-                        time_string = "pending"
-
-                    if value is not None:
-                        value_string = format_satoshis(value, True)
-                    else:
-                        value_string = '--'
-
-                    if fee is not None:
-                        fee_string = format_satoshis(fee, True)
-                    else:
-                        fee_string = '0'
-
-                    if tx_hash:
-                        label, is_default_label = wallet.get_label(tx_hash)
-                        label = label.encode('utf-8')
-                    else:
-                      label = ""
-
-                    balance_string = format_satoshis(balance, False)
-                    transaction.writerow([tx_hash, label, confirmations, value_string, fee_string, balance_string, time_string])
-                QMessageBox.information(None,_("CSV Export created"), _("Your CSV export has been successfully created."))
-
+            self.do_export_history(self.wallet, filename, csv_button.isChecked())
         except (IOError, os.error), reason:
             export_error_label = _("Electrum was unable to produce a transaction export.")
-            QMessageBox.critical(None,_("Unable to create csv"), export_error_label + "\n" + str(reason))
+            QMessageBox.critical(self, _("Unable to export history"), export_error_label + "\n" + str(reason))
+            return
 
+        QMessageBox.information(self,_("History exported"), _("Your wallet history has been successfully exported."))
+
+
+    def do_export_history(self, wallet, fileName, is_csv):
+        history = wallet.get_tx_history()
+        lines = []
+        for item in history:
+            tx_hash, confirmations, is_mine, value, fee, balance, timestamp = item
+            if confirmations:
+                if timestamp is not None:
+                    try:
+                        time_string = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
+                    except [RuntimeError, TypeError, NameError] as reason:
+                        time_string = "unknown"
+                        pass
+                else:
+                    time_string = "unknown"
+            else:
+                time_string = "pending"
+
+            if value is not None:
+                value_string = format_satoshis(value, True)
+            else:
+                value_string = '--'
+
+            if fee is not None:
+                fee_string = format_satoshis(fee, True)
+            else:
+                fee_string = '0'
+
+            if tx_hash:
+                label, is_default_label = wallet.get_label(tx_hash)
+                label = label.encode('utf-8')
+            else:
+                label = ""
+
+            balance_string = format_satoshis(balance, False)
+            if is_csv:
+                lines.append([tx_hash, label, confirmations, value_string, fee_string, balance_string, time_string])
+            else:
+                lines.append({'txid':tx_hash, 'date':"%16s"%time_string, 'label':label, 'value':value_string})
+
+        with open(fileName, "w+") as f:
+            if is_csv:
+                transaction = csv.writer(f)
+                transaction.writerow(["transaction_hash","label", "confirmations", "value", "fee", "balance", "timestamp"])
+                for line in lines:
+                    transaction.writerow(line)
+            else:
+                import json
+                f.write(json.dumps(lines, indent = 4))
+
+
+    def sweep_key_dialog(self):
+        d = QDialog(self)
+        d.setWindowTitle(_('Sweep private keys'))
+        d.setMinimumSize(600, 300)
+
+        vbox = QVBoxLayout(d)
+        vbox.addWidget(QLabel(_("Enter private keys")))
+
+        keys_e = QTextEdit()
+        keys_e.setTabChangesFocus(True)
+        vbox.addWidget(keys_e)
+
+        h, address_e = address_field(self.wallet.addresses())
+        vbox.addLayout(h)
+
+        vbox.addStretch(1)
+        hbox, button = ok_cancel_buttons2(d, _('Sweep'))
+        vbox.addLayout(hbox)
+        button.setEnabled(False)
+
+        def get_address():
+            addr = str(address_e.text())
+            if bitcoin.is_address(addr):
+                return addr
+
+        def get_pk():
+            pk = str(keys_e.toPlainText()).strip()
+            if Wallet.is_private_key(pk):
+                return pk.split()
+
+        f = lambda: button.setEnabled(get_address() is not None and get_pk() is not None)
+        keys_e.textChanged.connect(f)
+        address_e.textChanged.connect(f)
+        if not d.exec_():
+            return
+
+        fee = self.wallet.fee
+        tx = Transaction.sweep(get_pk(), self.network, get_address(), fee)
+        self.show_transaction(tx)
 
 
     @protected
@@ -2217,9 +2247,23 @@ class ElectrumWindow(QMainWindow):
         grid.addWidget(HelpButton(_('Using change addresses makes it more difficult for other people to track your transactions.')+' '), 4, 2)
         if not self.config.is_modifiable('use_change'): usechange_cb.setEnabled(False)
 
-        grid.setRowStretch(5,1)
+        block_explorers = ['vertexplorer.com', 'explorer.vertcoin.org']
+        block_ex_label = QLabel(_('Online Block Explorer') + ':')
+        grid.addWidget(block_ex_label, 5, 0)
+        block_ex_combo = QComboBox()
+        block_ex_combo.addItems(block_explorers)
+        block_ex_combo.setCurrentIndex(block_explorers.index(self.config.get('block_explorer', 'vertexplorer.com')))
+        grid.addWidget(block_ex_combo, 5, 1)
+        grid.addWidget(HelpButton(_('Choose which online block explorer to use for functions that open a web browser')+' '), 5, 2)
+
+        show_tx = self.config.get('show_before_broadcast', False)
+        showtx_cb = QCheckBox(_('Show before broadcast'))
+        showtx_cb.setChecked(show_tx)
+        grid.addWidget(showtx_cb, 6, 0)
+        grid.addWidget(HelpButton(_('Display the details of your transactions before broadcasting it.')), 6, 2)
 
         vbox.addLayout(grid)
+        vbox.addStretch(1)
         vbox.addLayout(ok_cancel_buttons(d))
         d.setLayout(vbox)
 
@@ -2254,6 +2298,9 @@ class ElectrumWindow(QMainWindow):
             self.wallet.use_change = usechange_result
             self.wallet.storage.put('use_change', self.wallet.use_change)
 
+        if showtx_cb.isChecked() != show_tx:
+            self.config.set_key('show_before_broadcast', not show_tx)
+
         unit_result = units[unit_combo.currentIndex()]
         if self.base_unit() != unit_result:
             self.decimal_point = 8 if unit_result == 'VTC' else 5
@@ -2268,6 +2315,9 @@ class ElectrumWindow(QMainWindow):
             self.config.set_key("language", lang_request, True)
             need_restart = True
 
+        be_result = block_explorers[block_ex_combo.currentIndex()]
+        self.config.set_key('block_explorer', be_result, True)
+
         run_hook('close_settings_dialog')
 
         if need_restart:
@@ -2281,8 +2331,10 @@ class ElectrumWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.tray.hide()
-        g = self.geometry()
-        self.config.set_key("winpos-qt", [g.left(),g.top(),g.width(),g.height()], True)
+        self.config.set_key("is_maximized", self.isMaximized())
+        if not self.isMaximized():
+            g = self.geometry()
+            self.config.set_key("winpos-qt", [g.left(),g.top(),g.width(),g.height()])
         self.save_column_widths()
         self.config.set_key("console-history", self.console.history[-50:], True)
         self.wallet.storage.put('accounts_expanded', self.accounts_expanded)
