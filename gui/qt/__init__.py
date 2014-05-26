@@ -70,32 +70,160 @@ class ElectrumGui:
         if app is None:
             self.app = QApplication(sys.argv)
         self.app.installEventFilter(self.efilter)
-
         init_plugins(self)
+        self.payment_request = None
+
+
+    def build_tray_menu(self):
+        m = QMenu()
+        m.addAction(_("Show/Hide"), self.show_or_hide)
+        m.addAction(_("Dark/Light"), self.toggle_tray_icon)
+        m.addSeparator()
+        m.addAction(_("Exit Electrum-Vert"), self.close)
+        self.tray.setContextMenu(m)
+
+    def toggle_tray_icon(self):
+        self.dark_icon = not self.dark_icon
+        self.config.set_key("dark_icon", self.dark_icon, True)
+        icon = QIcon(":icons/electrum_dark_icon.png") if self.dark_icon else QIcon(':icons/electrum_light_icon.png')
+        self.tray.setIcon(icon)
+
+    def show_or_hide(self):
+        self.tray_activated(QSystemTrayIcon.DoubleClick)
+
+    def tray_activated(self, reason):
+        if reason == QSystemTrayIcon.DoubleClick:
+            if self.current_window.isMinimized() or self.current_window.isHidden():
+                self.current_window.show()
+                self.current_window.raise_()
+            else:
+                self.current_window.hide()
+
+    def close(self):
+        self.current_window.close()
+
+
+
+    def go_full(self):
+        self.config.set_key('lite_mode', False, True)
+        self.lite_window.hide()
+        self.main_window.show()
+        self.main_window.raise_()
+        self.current_window = self.main_window
+
+    def go_lite(self):
+        self.config.set_key('lite_mode', True, True)
+        self.main_window.hide()
+        self.lite_window.show()
+        self.lite_window.raise_()
+        self.current_window = self.lite_window
+
+
+    def init_lite(self):
+        import lite_window
+        if not self.check_qt_version():
+            if self.config.get('lite_mode') is True:
+                msg = "Electrum was unable to load the 'Lite GUI' because it needs Qt version >= 4.7.\nChanging your config to use the 'Classic' GUI"
+                QMessageBox.warning(None, "Could not start Lite GUI.", msg)
+                self.config.set_key('lite_mode', False, True)
+                sys.exit(0)
+            self.lite_window = None
+            self.main_window.show()
+            self.main_window.raise_()
+            return
+
+        actuator = lite_window.MiniActuator(self.main_window)
+        actuator.load_theme()
+        self.lite_window = lite_window.MiniWindow(actuator, self.go_full, self.config)
+        driver = lite_window.MiniDriver(self.main_window, self.lite_window)
+
+        if self.config.get('lite_mode') is True:
+            self.go_lite()
+        else:
+            self.go_full()
+
+
+    def check_qt_version(self):
+        qtVersion = qVersion()
+        return int(qtVersion[0]) >= 4 and int(qtVersion[2]) >= 7
+
+
+    def set_url(self, url):
+        from electrum import util
+        from decimal import Decimal
+
+        try:
+            address, amount, label, message, request_url, url = util.parse_url(url)
+        except Exception:
+            QMessageBox.warning(self.main_window, _('Error'), _('Invalid vertcoin URL'), _('OK'))
+            return
+
+        if amount:
+            try:
+                if self.main_window.base_unit() == 'mVTC': 
+                    amount = str( 1000* Decimal(amount))
+                else: 
+                    amount = str(Decimal(amount))
+            except Exception:
+                amount = "0.0"
+                QMessageBox.warning(self.main_window, _('Error'), _('Invalid Amount'), _('OK'))
+
+        if request_url:
+            try:
+                from electrum import paymentrequest
+            except:
+                print "cannot import paymentrequest"
+                request_url = None
+
+        if not request_url:
+            self.main_window.set_send(address, amount, label, message)
+            self.lite_window.set_payment_fields(address, amount)
+            return
+
+        def payment_request():
+            self.payment_request = paymentrequest.PaymentRequest(request_url)
+            if self.payment_request.verify():
+                self.main_window.emit(SIGNAL('payment_request_ok'))
+            else:
+                self.main_window.emit(SIGNAL('payment_request_error'))
+
+        threading.Thread(target=payment_request).start()
+        self.main_window.prepare_for_payment_request()
 
 
     def main(self, url):
 
         storage = WalletStorage(self.config)
-        if not storage.file_exists:
-            import installwizard
-            wizard = installwizard.InstallWizard(self.config, self.network, storage)
-            wallet = wizard.run()
-            if not wallet: 
-                exit()
-
-        elif storage.get('wallet_type') in ['2of3'] and storage.get('seed') is None:
-            import installwizard
-            wizard = installwizard.InstallWizard(self.config, self.network, storage)
-            wallet = wizard.run(action= 'create2of3')
-            if not wallet: 
-                exit()
-
-        else:
+        if storage.file_exists:
             wallet = Wallet(storage)
+            action = wallet.get_action()
+        else:
+            action = 'new'
+
+        if action is not None:
+            import installwizard
+            wizard = installwizard.InstallWizard(self.config, self.network, storage)
+            wallet = wizard.run(action)
+            if not wallet: 
+                exit()
+        else:
             wallet.start_threads(self.network)
-            
-        self.main_window = w = ElectrumWindow(self.config, self.network)
+
+        # init tray
+        self.dark_icon = self.config.get("dark_icon", False)
+        icon = QIcon(":icons/electrum_dark_icon.png") if self.dark_icon else QIcon(':icons/electrum_light_icon.png')
+        self.tray = QSystemTrayIcon(icon, None)
+        self.tray.setToolTip('Electrum-Vert')
+        self.tray.activated.connect(self.tray_activated)
+        self.build_tray_menu()
+        self.tray.show()
+
+        # main window
+        self.main_window = w = ElectrumWindow(self.config, self.network, self)
+        self.current_window = self.main_window
+
+        #lite window
+        self.init_lite()
 
         # plugins that need to change the GUI do it here
         run_hook('init')
@@ -106,12 +234,19 @@ class ElectrumGui:
         s.start()
 
         self.windows.append(w)
-        if url: w.set_url(url)
+        if url: 
+            self.set_url(url)
+
         w.app = self.app
         w.connect_slots(s)
         w.update_wallet()
 
         self.app.exec_()
+
+        # clipboard persistence
+        # see http://www.mail-archive.com/pyqt@riverbankcomputing.com/msg17328.html
+        event = QtCore.QEvent(QtCore.QEvent.Clipboard)
+        self.app.sendEvent(self.app.clipboard(), event)
 
         wallet.stop_threads()
 

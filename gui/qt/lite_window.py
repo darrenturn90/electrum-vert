@@ -254,7 +254,7 @@ class MiniWindow(QDialog):
         self.toggle_receiving_layout(show_hist)
         
         self.setWindowIcon(QIcon(":icons/electrum-vert.png"))
-        self.setWindowTitle("Electrum")
+        self.setWindowTitle("Electrum-Vert")
         self.setWindowFlags(Qt.Window|Qt.MSWindowsFixedSizeDialogHint)
         self.layout().setSizeConstraint(QLayout.SetFixedSize)
         self.setObjectName("main_window")
@@ -672,7 +672,7 @@ class MiniActuator:
         s.start()
         w = QDialog()
         w.resize(200, 70)
-        w.setWindowTitle('Electrum')
+        w.setWindowTitle('Electrum-Vert')
         l = QLabel(_('Sending transaction, please wait.'))
         vbox = QVBoxLayout()
         vbox.addWidget(l)
@@ -720,7 +720,7 @@ class MiniActuator:
             QMessageBox.warning(parent_window, _('Error'), str(error), _('OK'))
             return False
 
-        if tx.is_complete:
+        if tx.is_complete():
             h = self.g.wallet.send_tx(tx)
 
             self.waiting_dialog(lambda: False if self.g.wallet.tx_event.isSet() else _("Sending transaction, please wait..."))
