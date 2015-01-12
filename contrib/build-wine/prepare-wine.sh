@@ -18,49 +18,40 @@ cd `dirname $0`
 set -e
 
 # Clean up Wine environment
-echo "Cleaning $WINEPREFIX"
-rm -rf $WINEPREFIX/*
-echo "done"
-
-echo "Cleaning tmp"
-rm -rf tmp
-mkdir -p tmp
-echo "done"
-
 cd tmp
 
 # Install Python
-wget -O python.msi "$PYTHON_URL"
-msiexec /q /i python.msi
+#wget -O python.msi "$PYTHON_URL"
+#msiexec /q /i python.msi
 
 # Install PyWin32
-wget -O pywin32.exe "$PYWIN32_URL"
-wine pywin32.exe
+#wget -O pywin32.exe "$PYWIN32_URL"
+#wine pywin32.exe
 
 # Install PyQt4
-wget -O PyQt.exe "$PYQT4_URL"
-wine PyQt.exe
+#wget -O PyQt.exe "$PYQT4_URL"
+#wine PyQt.exe
 
 #cp -r /electrum-wine/pyinstaller $WINEPREFIX/drive_c/
 # Install pyinstaller
-wget -O pyinstaller.zip "$PYINSTALLER_URL"
-unzip pyinstaller.zip
-mv pyinstaller-2.0 $WINEPREFIX/drive_c/pyinstaller
+#wget -O pyinstaller.zip "$PYINSTALLER_URL"
+#unzip pyinstaller.zip
+#mv pyinstaller-2.0 $WINEPREFIX/drive_c/pyinstaller
 
 # Patch pyinstaller's DummyZlib
-patch $WINEPREFIX/drive_c/pyinstaller/PyInstaller/loader/archive.py < ../archive.patch
+#patch $WINEPREFIX/drive_c/pyinstaller/PyInstaller/loader/archive.py < ../archive.patch
 
 # Install ZBar
 #wget -q -O zbar.exe "http://sourceforge.net/projects/zbar/files/zbar/0.10/zbar-0.10-setup.exe/download"
 #wine zbar.exe
 
 # Install dependencies
-wget -q -O - "http://python-distribute.org/distribute_setup.py" | $PYTHON
-wine "$PYHOME\\Scripts\\easy_install.exe" ecdsa slowaes vtc_scrypt #zbar
+wget -q -O - "https://svn.apache.org/repos/asf/oodt/tools/oodtsite.publisher/trunk/distribute_setup.py" | $PYTHON
+wine "$PYHOME\\Scripts\\easy_install.exe" ecdsa slowaes vtc_scrypt lyra2re_hash #zbar
 
 # Install NSIS installer
-wget -q -O nsis.exe "http://prdownloads.sourceforge.net/nsis/nsis-2.46-setup.exe?download"
-wine nsis.exe
+#wget -q -O nsis.exe "http://prdownloads.sourceforge.net/nsis/nsis-2.46-setup.exe?download"
+#wine nsis.exe
 
 # Install UPX
 #wget -O upx.zip "http://upx.sourceforge.net/download/upx308w.zip"

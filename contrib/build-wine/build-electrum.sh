@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # You probably need to update only this link
-ELECTRUM_URL=http://electrum.bitcoin.cz/download/Electrum-1.6.1.tar.gz
+#ELECTRUM_URL=http://electrum.bitcoin.cz/download/Electrum-1.6.1.tar.gz
 NAME_ROOT=electrum-1.6.1
 
 # These settings probably don't need any change
@@ -16,7 +16,6 @@ set -e
 cd tmp
 
 # Download and unpack Electrum
-wget -O electrum.tgz "$ELECTRUM_URL"
 tar xf electrum.tgz
 mv Electrum-* electrum
 rm -rf $WINEPREFIX/drive_c/electrum

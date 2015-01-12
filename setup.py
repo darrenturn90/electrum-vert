@@ -60,7 +60,7 @@ data_files += [
 setup(
     name="Electrum-Vert",
     version=version.ELECTRUM_VERSION,
-    install_requires=['slowaes', 'ecdsa>=0.9', 'vtc_scrypt'],
+    install_requires=['slowaes', 'ecdsa>=0.9', 'vtc_scrypt', 'lyra2re_hash=1.0.1'],
     package_dir={
         'electrum_vert': 'lib',
         'electrum_vert_gui': 'gui',

@@ -23,11 +23,8 @@ from math import pow as dec_pow
 from util import user_dir, appdata_dir, print_error, print_msg
 from bitcoin import *
 
-try:
-    from vtc_scrypt import getPoWHash
-except ImportError:
-    print_msg("Warning: vtc_scrypt not available, using fallback")
-    from scrypt import scrypt_N_1_1_80 as getPoWHash
+from vtc_scrypt import getPoWHash as getPowHash1
+from lyra2re_hash import getPoWHash as getPowHash2
 
 
 KGW_headers = [{} for x in xrange(4032)]
@@ -125,7 +122,10 @@ class Blockchain(threading.Thread):
             prev_hash = self.hash_header(prev_header)
 
             bits, target = self.get_target(height, chain)
-            _hash = self.pow_hash_header(header)
+            if height < 208301:
+                _hash = self.pow_hash_header2(header)
+            else :
+                _hash = self.pow_hash_header2(header)
             try:
                 assert prev_hash == header.get('prev_block_hash')
                 assert bits == header.get('bits')
@@ -160,7 +160,11 @@ class Blockchain(threading.Thread):
             height = index*2016 + i
             raw_header = data[i*80:(i+1)*80]
             header = self.header_from_string(raw_header)
-            _hash = self.pow_hash_header(header)
+            if height < 208301:
+                _hash = self.pow_hash_header2(header)
+            else :
+                _hash = self.pow_hash_header2(header)
+            
             if height >= 26754:
                 bits, target = self.get_target(height, data=data)
             assert previous_hash == header.get('prev_block_hash')
@@ -200,9 +204,12 @@ class Blockchain(threading.Thread):
     def hash_header(self, header):
         return rev_hex(Hash(self.header_to_string(header).decode('hex')).encode('hex'))
 
-    def pow_hash_header(self, header):
-        return rev_hex(getPoWHash(self.header_to_string(header).decode('hex')).encode('hex'))
+    def pow_hash_header1(self, header):
+        return rev_hex(getPoWHash1(self.header_to_string(header).decode('hex')).encode('hex'))
 
+    def pow_hash_header2(self, header):
+        return rev_hex(getPoWHash2(self.header_to_string(header).decode('hex')).encode('hex'))
+        
     def path(self):
         return os.path.join( self.config.path, 'blockchain_headers')
 
